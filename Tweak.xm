@@ -24,6 +24,11 @@ static NSString * const kSGFilterType = @"dylv.liquidglass.searchpill";
 static NSString * const kSGGroupNamespace = @"dylv.liquidglass";
 static NSString * const kSGGroupName = @"SearchGlass";
 
+static const CGFloat kSGRefraction = 2.6;
+static const CGFloat kSGRefractiveIndex = 1.92;
+static const CGFloat kSGGlassBlur = 1.4;
+static const CGFloat kSGSpecular = 1.3;
+
 static Class SGBackdropClass(void) {
     return NSClassFromString(@"CABackdropLayer");
 }
@@ -219,7 +224,7 @@ static NSString *SGEffectiveFilterType(UIView *view) {
     if (!blur)
         return;
 
-    SGSetValue(blur, @2.0, @"inputRadius");
+    SGSetValue(blur, @(2.0 * kSGGlassBlur), @"inputRadius");
     SGSetValue(blur, @YES, @"inputNormalizeEdges");
 
     if (!_nativeBlurLayer) {
@@ -328,6 +333,24 @@ static NSString *SGEffectiveFilterType(UIView *view) {
         }
 
         if (glassFilter) {
+            /*
+             * The registered filter type carries default SearchPill
+             * parameters. Overriding them here deepens the refraction;
+             * unsupported keys are ignored by SGSetValue.
+             */
+            SGSetValue(glassFilter, @(kSGRefraction), @"refraction");
+            SGSetValue(glassFilter, @(kSGRefraction), @"inputRefraction");
+            SGSetValue(glassFilter, @(kSGRefraction), @"inputAmount");
+
+            SGSetValue(glassFilter, @(kSGRefractiveIndex), @"refractiveIndex");
+            SGSetValue(glassFilter, @(kSGRefractiveIndex), @"inputRefractiveIndex");
+
+            SGSetValue(glassFilter, @(kSGGlassBlur), @"blur");
+            SGSetValue(glassFilter, @(kSGGlassBlur), @"inputBlurRadius");
+
+            SGSetValue(glassFilter, @(kSGSpecular), @"specular");
+            SGSetValue(glassFilter, @(kSGSpecular), @"inputSpecular");
+
             layer.filters = @[glassFilter];
             self.liquidFilterAvailable = YES;
 
@@ -908,9 +931,9 @@ static void SGInstallSearchGlass(
     }
 
     CGFloat width =
-        MIN(400.0,
-            MAX(300.0,
-                CGRectGetWidth(view.bounds) - 16.0));
+        MIN(352.0,
+            MAX(280.0,
+                CGRectGetWidth(view.bounds) - 44.0));
 
     CGFloat height = 44.0;
 
