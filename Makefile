@@ -15,7 +15,6 @@ SearchGlass_FRAMEWORKS := UIKit
 SearchGlass_PRIVATE_FRAMEWORKS := Preferences
 
 SearchGlass_EXTRA_FILES += \
-    Resources/GeneralBanner.png:/Library/Application Support/SearchGlass/GeneralBanner.png \
     Resources/AboutIcon.png:/Library/Application Support/SearchGlass/AboutIcon.png \
     Resources/SoftwareUpdateIcon.png:/Library/Application Support/SearchGlass/SoftwareUpdateIcon.png
 
