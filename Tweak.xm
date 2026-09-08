@@ -907,13 +907,10 @@ static void SGInstallSearchGlass(
         return;
     }
 
-    /*
-     * Smaller than the old 316 x 44 version.
-     */
     CGFloat width =
-        MIN(326.0,
-            MAX(270.0,
-                CGRectGetWidth(view.bounds) - 32.0));
+        MIN(400.0,
+            MAX(300.0,
+                CGRectGetWidth(view.bounds) - 16.0));
 
     CGFloat height = 44.0;
 
@@ -948,11 +945,8 @@ static void SGInstallSearchGlass(
 }
 
 
-#pragma mark - iOS 26/27 General banner + icons
+#pragma mark - General icons
 
-static const NSInteger kSGGeneralBannerTag = 0x5347424E;
-static NSString * const kSGGeneralBannerPath =
-    @"/Library/Application Support/SearchGlass/GeneralBanner.png";
 static NSString * const kSGAboutIconPath =
     @"/Library/Application Support/SearchGlass/AboutIcon.png";
 static NSString * const kSGSoftwareUpdateIconPath =
@@ -1024,94 +1018,6 @@ static UIImage *SGRoundedImage(UIImage *image, CGFloat size, CGFloat radius) {
     UIGraphicsEndImageContext();
 
     return result;
-}
-
-static UILabel *SGMakeLabel(NSString *text,
-                            UIFont *font,
-                            UIColor *color) {
-    UILabel *label = [[UILabel alloc] initWithFrame:CGRectZero];
-    label.text = text;
-    label.font = font;
-    label.textColor = color;
-    label.numberOfLines = 0;
-    label.backgroundColor = UIColor.clearColor;
-    label.adjustsFontSizeToFitWidth = NO;
-    label.lineBreakMode = NSLineBreakByWordWrapping;
-    return label;
-}
-
-static UIView *SGCreateGeneralBanner(CGFloat width) {
-    CGFloat bannerHeight = 154.0;
-
-    UIView *banner =
-        [[UIView alloc] initWithFrame:CGRectMake(0.0,
-                                                 0.0,
-                                                 width,
-                                                 bannerHeight)];
-
-    banner.backgroundColor = UIColor.clearColor;
-    banner.layer.cornerRadius = 28.0;
-    banner.layer.cornerCurve = kCACornerCurveContinuous;
-    banner.clipsToBounds = YES;
-    banner.userInteractionEnabled = NO;
-
-    UIVisualEffectView *material =
-        [[UIVisualEffectView alloc]
-            initWithEffect:
-                [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial]];
-
-    material.frame = banner.bounds;
-    material.autoresizingMask =
-        UIViewAutoresizingFlexibleWidth |
-        UIViewAutoresizingFlexibleHeight;
-    material.alpha = 0.96;
-    material.userInteractionEnabled = NO;
-    [banner addSubview:material];
-
-    UIImage *bannerImage =
-        SGLoadGeneralAsset(kSGGeneralBannerPath);
-
-    /*
-     * IMPORTANT:
-     * No SF Symbol fallback here. If the custom banner image is
-     * missing, nothing is shown instead of an unexpected gear icon.
-     */
-    if (bannerImage) {
-        UIImageView *icon =
-            [[UIImageView alloc] initWithFrame:CGRectZero];
-
-        icon.image =
-            SGRoundedImage(bannerImage, 52.0, 12.0);
-
-        icon.contentMode = UIViewContentModeScaleAspectFit;
-        icon.clipsToBounds = YES;
-        icon.layer.cornerRadius = 12.0;
-        icon.layer.cornerCurve = kCACornerCurveContinuous;
-        icon.userInteractionEnabled = NO;
-
-        [banner addSubview:icon];
-    }
-
-    UILabel *title =
-        SGMakeLabel(@"General",
-                    [UIFont systemFontOfSize:19.0
-                                      weight:UIFontWeightBold],
-                    UIColor.labelColor);
-
-    title.tag = kSGGeneralBannerTag + 2;
-    [banner addSubview:title];
-
-    UILabel *subtitle =
-        SGMakeLabel(
-            @"Manage your overall setup and preferences for Device, such as software updates, device language, CarPlay, AirDrop, and more.",
-            [UIFont systemFontOfSize:13.0
-                              weight:UIFontWeightRegular],
-            UIColor.secondaryLabelColor);
-
-    subtitle.tag = kSGGeneralBannerTag + 3;
-    [banner addSubview:subtitle];
-
-    return banner;
 }
 
 static UITableView *SGFindSettingsTableView(UIView *view) {
@@ -1190,7 +1096,7 @@ static void SGApplyGeneralIcon(UITableViewCell *cell,
         CGRectMake(0.0, 0.0, 18.0, 18.0);
 }
 
-static void SGLayoutGeneralBanner(UIViewController *controller) {
+static void SGApplyGeneralIcons(UIViewController *controller) {
     if (!SGIsGeneralController(controller))
         return;
 
@@ -1200,134 +1106,6 @@ static void SGLayoutGeneralBanner(UIViewController *controller) {
     if (!table)
         return;
 
-    /*
-     * The banner is now a REAL tableHeaderView.
-     *
-     * This is important: it becomes part of the Settings table
-     * layout instead of floating over About / Software Update.
-     * Therefore the native cells are automatically placed below it.
-     */
-    CGFloat width = CGRectGetWidth(table.bounds);
-
-    if (width <= 0.0)
-        return;
-
-    UIView *headerContainer =
-        [table.tableHeaderView viewWithTag:kSGGeneralBannerTag];
-
-    if (!headerContainer) {
-        headerContainer =
-            [[UIView alloc]
-                initWithFrame:CGRectMake(0.0,
-                                         0.0,
-                                         width,
-                                         174.0)];
-
-        headerContainer.tag = kSGGeneralBannerTag;
-        headerContainer.backgroundColor = UIColor.clearColor;
-        headerContainer.userInteractionEnabled = NO;
-
-        UIView *banner =
-            SGCreateGeneralBanner(MAX(0.0, width - 32.0));
-
-        banner.tag = kSGGeneralBannerTag + 10;
-
-        [headerContainer addSubview:banner];
-
-        table.tableHeaderView = headerContainer;
-    }
-
-    headerContainer =
-        table.tableHeaderView;
-
-    headerContainer.frame =
-        CGRectMake(0.0,
-                   0.0,
-                   width,
-                   174.0);
-
-    UIView *banner =
-        [headerContainer viewWithTag:kSGGeneralBannerTag + 10];
-
-    if (!banner)
-        return;
-
-    CGFloat side = 16.0;
-    CGFloat bannerWidth =
-        MAX(0.0, width - side * 2.0);
-
-    banner.frame =
-        CGRectMake(side,
-                   10.0,
-                   bannerWidth,
-                   154.0);
-
-    UIView *material = nil;
-    UIImageView *icon = nil;
-    UILabel *title = nil;
-    UILabel *subtitle = nil;
-
-    for (UIView *subview in banner.subviews) {
-        if ([subview isKindOfClass:[UIVisualEffectView class]]) {
-            material = subview;
-        } else if ([subview isKindOfClass:[UIImageView class]]) {
-            icon = (UIImageView *)subview;
-        } else if (subview.tag == kSGGeneralBannerTag + 2) {
-            title = (UILabel *)subview;
-        } else if (subview.tag == kSGGeneralBannerTag + 3) {
-            subtitle = (UILabel *)subview;
-        }
-    }
-
-    material.frame = banner.bounds;
-
-    /*
-     * Compact iOS 26/27-style banner:
-     * icon on top, General underneath, description underneath.
-     */
-    if (icon) {
-        icon.frame =
-            CGRectMake(24.0,
-                       14.0,
-                       52.0,
-                       52.0);
-
-        icon.layer.cornerRadius = 12.0;
-        icon.layer.cornerCurve = kCACornerCurveContinuous;
-        icon.clipsToBounds = YES;
-    }
-
-    if (title) {
-        title.frame =
-            CGRectMake(24.0,
-                       72.0,
-                       bannerWidth - 48.0,
-                       24.0);
-
-        title.font =
-            [UIFont systemFontOfSize:19.0
-                              weight:UIFontWeightBold];
-    }
-
-    if (subtitle) {
-        subtitle.frame =
-            CGRectMake(24.0,
-                       98.0,
-                       bannerWidth - 48.0,
-                       48.0);
-
-        subtitle.font =
-            [UIFont systemFontOfSize:13.0
-                              weight:UIFontWeightRegular];
-
-        subtitle.numberOfLines = 3;
-        subtitle.adjustsFontSizeToFitWidth = YES;
-        subtitle.minimumScaleFactor = 0.80;
-    }
-
-    /*
-     * Re-apply the custom icons whenever the cells become visible.
-     */
     UITableViewCell *about =
         SGFindGeneralCell(table, @"About");
 
@@ -1336,35 +1114,8 @@ static void SGLayoutGeneralBanner(UIViewController *controller) {
 
     SGApplyGeneralIcon(about, kSGAboutIconPath);
     SGApplyGeneralIcon(software, kSGSoftwareUpdateIconPath);
-
-    /*
-     * Do not bring the banner above the table anymore.
-     * It belongs to the table's layout now.
-     */
 }
 
-static void SGRemoveGeneralBanner(UIViewController *controller) {
-    if (!controller)
-        return;
-
-    UITableView *table =
-        SGFindSettingsTableView(controller.view);
-
-    if (!table)
-        return;
-
-    UIView *header = table.tableHeaderView;
-
-    if (header &&
-        [header viewWithTag:kSGGeneralBannerTag]) {
-
-        /*
-         * Only remove our own header. We do not disturb a native
-         * Settings header belonging to another page.
-         */
-        table.tableHeaderView = nil;
-    }
-}
 
 #pragma mark - Logos hooks
 
@@ -1384,21 +1135,15 @@ static void SGRemoveGeneralBanner(UIViewController *controller) {
 
     if (SGIsGeneralController(self)) {
         dispatch_async(dispatch_get_main_queue(), ^{
-            SGLayoutGeneralBanner(self);
+            SGApplyGeneralIcons(self);
         });
-    } else {
-        SGRemoveGeneralBanner(self);
     }
 }
 
 - (void)viewDidLayoutSubviews {
     %orig;
 
-    if (SGIsGeneralController(self)) {
-        SGLayoutGeneralBanner(self);
-    } else {
-        SGRemoveGeneralBanner(self);
-    }
+    SGApplyGeneralIcons(self);
 }
 
 %end
