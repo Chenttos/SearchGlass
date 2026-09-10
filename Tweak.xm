@@ -18,334 +18,66 @@
 - (void)searchFieldBecomeFirstResponder;
 @end
 
-#pragma mark - Liquid Glass constants
+#pragma mark - Liquid Glass renderer
 
-static NSString * const kSGFilterType = @"dylv.liquidglass.searchpill";
-static NSString * const kSGGroupNamespace = @"dylv.liquidglass";
-static NSString * const kSGGroupName = @"SearchGlass";
+/*
+ * SearchGlass uses the upstream Liquid (Gl)ass renderer from:
+ * https://github.com/winaviation-tweaks/liquidass
+ *
+ * The renderer supplies the live backdrop, refraction, specular
+ * highlights and dynamic light/dark variants.
+ *
+ * Required upstream Shared files:
+ *   LGHostRegistry.h
+ *   LGFramework.h/.m
+ *   LGGlassKit.h/.x
+ *   LGLiquidMotion.h
+ *   LGLiveBackdropView.h/.m
+ *   LGSharedSupport.h/.m
+ */
 
-static Class SGBackdropClass(void) {
-    return NSClassFromString(@"CABackdropLayer");
-}
+#import "Shared/LGLiveBackdropView.h"
+#import "Shared/LGGlassKit.h"
+#import "Shared/LGHostRegistry.h"
 
-static Class SGFilterClass(void) {
-    return NSClassFromString(@"CAFilter");
-}
-
-static id SGFilterWithType(NSString *type) {
-    Class cls = SGFilterClass();
-    if (!cls || !type.length) return nil;
-
-    SEL selector = NSSelectorFromString(@"filterWithType:");
-    if (![cls respondsToSelector:selector]) return nil;
-
-    return ((id (*)(Class, SEL, NSString *))objc_msgSend)(cls, selector, type);
-}
-
-static id SGFilterWithName(NSString *name) {
-    Class cls = SGFilterClass();
-    if (!cls || !name.length) return nil;
-
-    SEL selector = NSSelectorFromString(@"filterWithName:");
-    if (![cls respondsToSelector:selector]) return nil;
-
-    return ((id (*)(Class, SEL, NSString *))objc_msgSend)(cls, selector, name);
-}
-
-static void SGSetValue(id object, id value, NSString *key) {
-    if (!object || !key.length) return;
-
-    @try {
-        [object setValue:value forKey:key];
-    } @catch (__unused NSException *exception) {
-    }
-}
-
-static NSString *SGEffectiveFilterType(UIView *view) {
-    NSString *type = kSGFilterType;
-
-    if (@available(iOS 13.0, *)) {
-        if (view.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark)
-            type = [type stringByAppendingString:@".dark"];
-    }
-
-    return type;
-}
-
-#pragma mark - Live Liquid Glass
-
-@interface SGLiveGlassView : UIView
+@interface SGLiveGlassView : LGLiveBackdropView
 @property(nonatomic, assign) CGFloat cornerRadius;
-@property(nonatomic, assign) BOOL liquidFilterAvailable;
 - (void)applyLiquidGlass;
 @end
 
-@implementation SGLiveGlassView {
-    CAGradientLayer *_specular;
-    CAGradientLayer *_specularBoost;
-    CAShapeLayer *_specularMask;
-    CAShapeLayer *_specularBoostMask;
-    CALayer *_nativeBlurLayer;
-}
-
-+ (Class)layerClass {
-    Class backdrop = SGBackdropClass();
-    return backdrop ?: [CALayer class];
-}
+@implementation SGLiveGlassView
 
 - (instancetype)initWithFrame:(CGRect)frame {
-    self = [super initWithFrame:frame];
+    self = [super initWithFrame:frame
+                       groupName:@"SearchGlass"
+                     filterType:@"dylv.liquidglass.searchpill"];
 
-    if (!self) return nil;
+    if (!self)
+        return nil;
 
     self.backgroundColor = UIColor.clearColor;
     self.opaque = NO;
     self.userInteractionEnabled = NO;
 
-    self.autoresizingMask =
-        UIViewAutoresizingFlexibleWidth |
-        UIViewAutoresizingFlexibleHeight;
-
     self.cornerRadius =
         MIN(CGRectGetWidth(frame), CGRectGetHeight(frame)) * 0.5;
 
-    [self setupSpecular];
     [self applyLiquidGlass];
 
     return self;
 }
 
-- (void)setupSpecular {
-    /*
-     * Same visual concept used by LGLiveBackdropView:
-     * a normal specular gradient and a stronger overlay-blended
-     * gradient, both clipped to the rounded glass shape.
-     */
-
-    _specular = [CAGradientLayer layer];
-
-    _specular.colors = @[
-        (id)[UIColor colorWithWhite:1.0 alpha:0.30].CGColor,
-        (id)[UIColor clearColor].CGColor,
-        (id)[UIColor colorWithWhite:1.0 alpha:0.12].CGColor
-    ];
-
-    _specular.locations = @[
-        @0.0,
-        @0.50,
-        @1.0
-    ];
-
-    _specularBoost = [CAGradientLayer layer];
-
-    _specularBoost.colors = @[
-        (id)[UIColor colorWithWhite:1.0 alpha:0.32].CGColor,
-        (id)[UIColor clearColor].CGColor,
-        (id)[UIColor colorWithWhite:1.0 alpha:0.16].CGColor
-    ];
-
-    _specularBoost.locations = @[
-        @0.0,
-        @0.50,
-        @1.0
-    ];
-
-    _specularBoost.compositingFilter = @"overlayBlendMode";
-
-    _specularMask = [CAShapeLayer layer];
-    _specularBoostMask = [CAShapeLayer layer];
-
-    _specular.mask = _specularMask;
-    _specularBoost.mask = _specularBoostMask;
-
-    [self.layer addSublayer:_specular];
-    [self.layer addSublayer:_specularBoost];
-}
-
-- (void)layoutSpecular {
-    CGRect bounds = self.bounds;
-    CGFloat radius = self.cornerRadius;
-
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
-
-    _specular.frame = bounds;
-    _specularBoost.frame = bounds;
-
-    UIBezierPath *path =
-        [UIBezierPath bezierPathWithRoundedRect:
-            CGRectInset(bounds, 0.35, 0.35)
-            cornerRadius:MAX(0.0, radius - 0.35)];
-
-    _specularMask.frame = bounds;
-    _specularMask.path = path.CGPath;
-    _specularMask.fillColor = UIColor.clearColor.CGColor;
-    _specularMask.strokeColor = UIColor.blackColor.CGColor;
-    _specularMask.lineWidth = 1.0;
-
-    _specularBoostMask.frame = bounds;
-    _specularBoostMask.path = path.CGPath;
-    _specularBoostMask.fillColor = UIColor.clearColor.CGColor;
-    _specularBoostMask.strokeColor = UIColor.blackColor.CGColor;
-    _specularBoostMask.lineWidth = 1.0;
-
-    /*
-     * Same default specular angle used by Liquid (Gl)ass.
-     */
-    CGFloat angle = -M_PI_4;
-    CGFloat dx = cos(angle) * 0.5;
-    CGFloat dy = sin(angle) * 0.5;
-
-    _specular.startPoint =
-        CGPointMake(0.5 + dx, 0.5 + dy);
-
-    _specular.endPoint =
-        CGPointMake(0.5 - dx, 0.5 - dy);
-
-    _specularBoost.startPoint = _specular.startPoint;
-    _specularBoost.endPoint = _specular.endPoint;
-
-    [CATransaction commit];
-}
-
-- (void)applyNativeBlurFallback {
-    Class backdropClass = SGBackdropClass();
-
-    if (!backdropClass)
-        return;
-
-    id blur = SGFilterWithName(@"gaussianBlur");
-
-    if (!blur)
-        return;
-
-    SGSetValue(blur, @2.0, @"inputRadius");
-    SGSetValue(blur, @YES, @"inputNormalizeEdges");
-
-    if (!_nativeBlurLayer) {
-        _nativeBlurLayer = [backdropClass layer];
-
-        SGSetValue(_nativeBlurLayer,
-                   @NO,
-                   @"layerUsesCoreImageFilters");
-
-        SGSetValue(_nativeBlurLayer,
-                   @YES,
-                   @"windowServerAware");
-
-        SGSetValue(_nativeBlurLayer,
-                   kSGGroupName,
-                   @"groupName");
-
-        SGSetValue(_nativeBlurLayer,
-                   kSGGroupNamespace,
-                   @"groupNamespace");
-
-        SGSetValue(_nativeBlurLayer,
-                   @YES,
-                   @"ignoresScreenClip");
-
-        SGSetValue(_nativeBlurLayer,
-                   @1.0,
-                   @"scale");
-
-        [self.layer insertSublayer:_nativeBlurLayer atIndex:0];
-    }
-
-    _nativeBlurLayer.frame = self.bounds;
-    _nativeBlurLayer.cornerRadius = self.cornerRadius;
-    _nativeBlurLayer.masksToBounds = YES;
-    _nativeBlurLayer.filters = @[blur];
-}
-
 - (void)applyLiquidGlass {
-    Class backdropClass = SGBackdropClass();
-    CALayer *layer = self.layer;
+    /*
+     * The actual refraction/filter parameters are controlled by
+     * LGHostRegistry.h. We also slightly zoom the backdrop so the
+     * refraction is more visible on this small search pill.
+     */
+    self.lgShapeRect = self.bounds;
+    self.lgShapeCornerRadius = self.cornerRadius;
+    self.lgBackdropZoom = 1.035;
 
-    if (!backdropClass ||
-        ![layer isKindOfClass:backdropClass]) {
-
-        [self layoutSpecular];
-        return;
-    }
-
-    @try {
-        /*
-         * These are the same private render-server properties
-         * configured by LGLiveBackdropView in Liquid (Gl)ass.
-         */
-
-        SGSetValue(layer,
-                   @NO,
-                   @"layerUsesCoreImageFilters");
-
-        SGSetValue(layer,
-                   @YES,
-                   @"windowServerAware");
-
-        SGSetValue(layer,
-                   kSGGroupName,
-                   @"groupName");
-
-        SGSetValue(layer,
-                   kSGGroupNamespace,
-                   @"groupNamespace");
-
-        SGSetValue(layer,
-                   @YES,
-                   @"ignoresScreenClip");
-
-        /*
-         * SearchPill in LGHostRegistry:
-         *
-         * refraction       = 1.6
-         * refractiveIndex  = 1.70
-         * blur             = 1.0
-         * specular         = 1.0
-         *
-         * The actual Liquid (Gl)ass filter consumes these parameters
-         * through its registered filter type.
-         */
-
-        SGSetValue(layer, @1.0, @"scale");
-
-        NSString *filterType =
-            SGEffectiveFilterType(self);
-
-        id glassFilter =
-            SGFilterWithType(filterType);
-
-        /*
-         * Some builds register only the base filter name.
-         * Try it before falling back to gaussian blur.
-         */
-
-        if (!glassFilter &&
-            ![filterType isEqualToString:kSGFilterType]) {
-
-            glassFilter =
-                SGFilterWithType(kSGFilterType);
-        }
-
-        if (glassFilter) {
-            layer.filters = @[glassFilter];
-            self.liquidFilterAvailable = YES;
-
-            if (_nativeBlurLayer) {
-                [_nativeBlurLayer removeFromSuperlayer];
-                _nativeBlurLayer = nil;
-            }
-        } else {
-            self.liquidFilterAvailable = NO;
-            [self applyNativeBlurFallback];
-        }
-
-    } @catch (__unused NSException *exception) {
-        self.liquidFilterAvailable = NO;
-        [self applyNativeBlurFallback];
-    }
-
-    [self layoutSpecular];
+    [self applyFilters];
 }
 
 - (void)setCornerRadius:(CGFloat)cornerRadius {
@@ -355,20 +87,10 @@ static NSString *SGEffectiveFilterType(UIView *view) {
     self.layer.cornerCurve = kCACornerCurveContinuous;
     self.layer.masksToBounds = YES;
 
-    [self layoutSpecular];
+    self.lgShapeRect = self.bounds;
+    self.lgShapeCornerRadius = cornerRadius;
+
     [self applyLiquidGlass];
-}
-
-- (void)traitCollectionDidChange:(UITraitCollection *)previousTraitCollection {
-    [super traitCollectionDidChange:previousTraitCollection];
-
-    if (@available(iOS 13.0, *)) {
-        if (previousTraitCollection.userInterfaceStyle !=
-            self.traitCollection.userInterfaceStyle) {
-
-            [self applyLiquidGlass];
-        }
-    }
 }
 
 - (void)layoutSubviews {
@@ -378,10 +100,21 @@ static NSString *SGEffectiveFilterType(UIView *view) {
     self.layer.cornerCurve = kCACornerCurveContinuous;
     self.layer.masksToBounds = YES;
 
-    [self layoutSpecular];
+    self.lgShapeRect = self.bounds;
+    self.lgShapeCornerRadius = self.cornerRadius;
 
-    if (!self.liquidFilterAvailable)
-        [self applyNativeBlurFallback];
+    [self applyFilters];
+}
+
+- (void)traitCollectionDidChange:(UITraitCollection *)previousTraitCollection {
+    [super traitCollectionDidChange:previousTraitCollection];
+
+    if (@available(iOS 13.0, *)) {
+        if (previousTraitCollection.userInterfaceStyle !=
+            self.traitCollection.userInterfaceStyle) {
+            [self applyLiquidGlass];
+        }
+    }
 }
 
 @end
