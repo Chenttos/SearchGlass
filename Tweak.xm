@@ -71,8 +71,6 @@
 
     self.layer.cornerRadius = cornerRadius;
     self.layer.cornerCurve = kCACornerCurveContinuous;
-    self.layer.masksToBounds = YES;
-
     self.lgShapeRect = self.bounds;
     self.lgShapeCornerRadius = cornerRadius;
     [self applyFilters];
@@ -83,8 +81,6 @@
 
     self.layer.cornerRadius = self.cornerRadius;
     self.layer.cornerCurve = kCACornerCurveContinuous;
-    self.layer.masksToBounds = YES;
-
     // IMPORTANT: the Liquid Glass shape is the entire pill.
     self.lgShapeRect = self.bounds;
     self.lgShapeCornerRadius = MIN(self.cornerRadius,
