@@ -62,14 +62,9 @@ static void SGSetValue(id object, id value, NSString *key) {
 }
 
 static NSString *SGEffectiveFilterType(UIView *view) {
-    NSString *type = kSGFilterType;
-
-    if (@available(iOS 13.0, *)) {
-        if (view.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark)
-            type = [type stringByAppendingString:@".dark"];
-    }
-
-    return type;
+    // Use the base registered renderer name. Adding a .dark suffix can
+    // disable the effect on systems where only the base filter exists.
+    return kSGFilterType;
 }
 
 #pragma mark - Live Liquid Glass
@@ -219,7 +214,7 @@ static NSString *SGEffectiveFilterType(UIView *view) {
     if (!blur)
         return;
 
-    SGSetValue(blur, @2.0, @"inputRadius");
+    SGSetValue(blur, @0.5, @"inputRadius");
     SGSetValue(blur, @YES, @"inputNormalizeEdges");
 
     if (!_nativeBlurLayer) {
@@ -256,6 +251,19 @@ static NSString *SGEffectiveFilterType(UIView *view) {
     _nativeBlurLayer.cornerRadius = self.cornerRadius;
     _nativeBlurLayer.masksToBounds = YES;
     _nativeBlurLayer.filters = @[blur];
+}
+
+- (void)configureGlassFilter:(id)filter {
+    if (!filter) return;
+    // Renderer configuration only; unsupported KVC keys are ignored.
+    SGSetValue(filter, @2.6,  @"refractionScale");
+    SGSetValue(filter, @1.80, @"refractiveIndex");
+    SGSetValue(filter, @108.0, @"glassThickness");
+    SGSetValue(filter, @2.0,  @"dispersionStrength");
+    SGSetValue(filter, @1.0,  @"fresnelGlareStrength");
+    SGSetValue(filter, @0.5,  @"blur");
+    SGSetValue(filter, @0.5,  @"inputRadius");
+    SGSetValue(filter, @1.10, @"zoom");
 }
 
 - (void)applyLiquidGlass {
@@ -328,6 +336,7 @@ static NSString *SGEffectiveFilterType(UIView *view) {
         }
 
         if (glassFilter) {
+            [self configureGlassFilter:glassFilter];
             layer.filters = @[glassFilter];
             self.liquidFilterAvailable = YES;
 
@@ -388,11 +397,18 @@ static NSString *SGEffectiveFilterType(UIView *view) {
 
 #pragma mark - Search button
 
-@interface SGSearchButton : UIControl
+@interface SGSearchButton : UIControl <UITextFieldDelegate>
 @property(nonatomic, strong) SGLiveGlassView *glassView;
 @property(nonatomic, strong) UIImageView *searchIcon;
 @property(nonatomic, strong) UILabel *titleLabel;
 @property(nonatomic, strong) UIImageView *micIcon;
+@property(nonatomic, strong) UIView *activeSearchContainer;
+@property(nonatomic, strong) SGLiveGlassView *activeSearchGlass;
+@property(nonatomic, strong) UIButton *activeCloseButton;
+@property(nonatomic, weak) UISearchBar *activeNativeSearchBar;
+@property(nonatomic, weak) UIView *originalSearchSuperview;
+@property(nonatomic, assign) CGRect originalSearchFrame;
+@property(nonatomic, assign) NSInteger originalSearchIndex;
 @end
 
 @interface SGSearchButton ()
@@ -659,6 +675,7 @@ static NSString *SGEffectiveFilterType(UIView *view) {
             UISearchBar *bar = [self findSearchBarInView:root.view];
 
             if (bar) {
+                [self showGlassSearchForBar:bar];
                 UIScrollView *scroll =
                     [self findScrollViewContainingView:bar];
 
@@ -688,6 +705,8 @@ static NSString *SGEffectiveFilterType(UIView *view) {
 
                 UISearchBar *searchBar =
                     searchController.searchBar;
+
+                [self showGlassSearchForBar:searchBar];
 
                 if ([searchBar respondsToSelector:
                      @selector(searchFieldBecomeFirstResponder)]) {
@@ -720,6 +739,8 @@ static NSString *SGEffectiveFilterType(UIView *view) {
                         if (!windowBar)
                             continue;
 
+                        [self showGlassSearchForBar:windowBar];
+
                         if ([windowBar respondsToSelector:
                              @selector(searchFieldBecomeFirstResponder)]) {
                             [windowBar searchFieldBecomeFirstResponder];
@@ -742,6 +763,8 @@ static NSString *SGEffectiveFilterType(UIView *view) {
                     if (!retry)
                         return;
 
+                    [self showGlassSearchForBar:retry];
+
                     if ([retry respondsToSelector:
                          @selector(searchFieldBecomeFirstResponder)]) {
                         [retry searchFieldBecomeFirstResponder];
@@ -750,6 +773,146 @@ static NSString *SGEffectiveFilterType(UIView *view) {
                     }
                 });
         });
+}
+
+#pragma mark - Glass search UI
+
+- (void)positionActiveSearchUIWithKeyboardFrame:(CGRect)keyboardFrame {
+    UIWindow *window = self.activeSearchContainer.window ?: self.window;
+    if (!window || !self.activeSearchContainer) return;
+
+    CGRect kb = [window convertRect:keyboardFrame fromWindow:nil];
+    CGFloat bottom = CGRectGetHeight(window.bounds) - CGRectGetMinY(kb);
+    CGFloat h = 48.0;
+    CGFloat closeW = 62.0;
+    CGFloat gap = 10.0;
+    CGFloat side = 8.0;
+    CGFloat y = CGRectGetHeight(window.bounds) - bottom - h - 12.0;
+    if (bottom <= 0.0) y = CGRectGetHeight(window.bounds) - h - 18.0;
+
+    self.activeSearchContainer.frame = CGRectMake(side, y,
+        CGRectGetWidth(window.bounds) - side * 2.0, h);
+
+    CGFloat glassW = CGRectGetWidth(self.activeSearchContainer.bounds) - closeW - gap;
+    self.activeSearchGlass.frame = CGRectMake(0, 0, glassW, h);
+
+    if (self.activeNativeSearchBar) {
+        self.activeNativeSearchBar.frame = self.activeSearchGlass.frame;
+        self.activeNativeSearchBar.backgroundColor = UIColor.clearColor;
+        self.activeNativeSearchBar.searchTextField.backgroundColor = UIColor.clearColor;
+        self.activeNativeSearchBar.searchTextField.layer.backgroundColor = UIColor.clearColor.CGColor;
+    }
+
+    self.activeCloseButton.frame = CGRectMake(glassW + gap, 0, closeW, h);
+}
+
+- (void)sgKeyboardFrameChanged:(NSNotification *)note {
+    CGRect frame = [note.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue];
+    NSTimeInterval duration = [note.userInfo[UIKeyboardAnimationDurationUserInfoKey] doubleValue];
+    UIViewAnimationOptions options = ([note.userInfo[UIKeyboardAnimationCurveUserInfoKey] integerValue] << 16) | UIViewAnimationOptionBeginFromCurrentState;
+    [UIView animateWithDuration:duration delay:0 options:options animations:^{
+        [self positionActiveSearchUIWithKeyboardFrame:frame];
+    } completion:nil];
+}
+
+- (void)closeGlassSearch {
+    [[NSNotificationCenter defaultCenter] removeObserver:self
+        name:UIKeyboardWillChangeFrameNotification object:nil];
+    [[NSNotificationCenter defaultCenter] removeObserver:self
+        name:UIKeyboardWillHideNotification object:nil];
+
+    UISearchBar *bar = self.activeNativeSearchBar;
+    if (bar) {
+        [bar resignFirstResponder];
+        [bar removeFromSuperview];
+        if (self.originalSearchSuperview) {
+            NSInteger idx = self.originalSearchIndex;
+            if (idx < 0 || idx > (NSInteger)self.originalSearchSuperview.subviews.count)
+                idx = self.originalSearchSuperview.subviews.count;
+            [self.originalSearchSuperview insertSubview:bar atIndex:idx];
+            bar.frame = self.originalSearchFrame;
+        }
+        bar.backgroundColor = nil;
+    }
+
+    [self.activeSearchContainer removeFromSuperview];
+    self.activeSearchContainer = nil;
+    self.activeSearchGlass = nil;
+    self.activeCloseButton = nil;
+    self.activeNativeSearchBar = nil;
+    self.originalSearchSuperview = nil;
+}
+
+- (void)showGlassSearchForBar:(UISearchBar *)bar {
+    if (!bar || self.activeSearchContainer) return;
+    UIWindow *window = bar.window ?: self.window;
+    if (!window) return;
+
+    self.activeNativeSearchBar = bar;
+    self.originalSearchSuperview = bar.superview;
+    self.originalSearchFrame = bar.frame;
+    self.originalSearchIndex = [self.originalSearchSuperview.subviews indexOfObject:bar];
+
+    UIView *container = [[UIView alloc] initWithFrame:CGRectZero];
+    container.backgroundColor = UIColor.clearColor;
+    container.userInteractionEnabled = YES;
+    self.activeSearchContainer = container;
+    [window addSubview:container];
+
+    self.activeSearchGlass = [[SGLiveGlassView alloc] initWithFrame:CGRectZero];
+    self.activeSearchGlass.cornerRadius = 24.0;
+    self.activeSearchGlass.userInteractionEnabled = NO;
+    [container addSubview:self.activeSearchGlass];
+
+    // Native blur underneath guarantees a visible translucent glass surface
+    // even when the private refraction renderer is not registered.
+    UIVisualEffectView *blur = [[UIVisualEffectView alloc]
+        initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial]];
+    blur.frame = self.activeSearchGlass.bounds;
+    blur.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    blur.alpha = 0.50;
+    blur.userInteractionEnabled = NO;
+    blur.layer.cornerRadius = 24.0;
+    blur.clipsToBounds = YES;
+    [self.activeSearchGlass insertSubview:blur atSubviewIndex:0];
+
+    UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.activeCloseButton = close;
+    close.backgroundColor = UIColor.clearColor;
+    close.layer.cornerRadius = 24.0;
+    close.clipsToBounds = YES;
+    UIImage *x = [UIImage systemImageNamed:@"xmark"];
+    [close setImage:x forState:UIControlStateNormal];
+    close.tintColor = UIColor.labelColor;
+    close.imageView.contentMode = UIViewContentModeScaleAspectFit;
+    close.accessibilityLabel = @"Close Search";
+    [close addTarget:self action:@selector(closeGlassSearch)
+        forControlEvents:UIControlEventTouchUpInside];
+    [container addSubview:close];
+
+    // Move the real native search bar into our glass container. The native
+    // field remains the actual responder, so Settings search keeps working.
+    [bar removeFromSuperview];
+    [container addSubview:bar];
+    bar.searchTextField.backgroundColor = UIColor.clearColor;
+    bar.backgroundColor = UIColor.clearColor;
+    bar.barTintColor = UIColor.clearColor;
+    bar.translucent = YES;
+
+    [[NSNotificationCenter defaultCenter] addObserver:self
+        selector:@selector(sgKeyboardFrameChanged:)
+        name:UIKeyboardWillChangeFrameNotification object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+        selector:@selector(sgKeyboardFrameChanged:)
+        name:UIKeyboardWillHideNotification object:nil];
+
+    CGRect screenFrame = window.bounds;
+    [self positionActiveSearchUIWithKeyboardFrame:CGRectMake(0, CGRectGetHeight(screenFrame),
+        CGRectGetWidth(screenFrame), 0)];
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [bar becomeFirstResponder];
+    });
 }
 
 #pragma mark - View controller finder
@@ -829,6 +992,11 @@ static NSString *SGEffectiveFilterType(UIView *view) {
     }
 
     return nil;
+}
+
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
 @end
@@ -932,9 +1100,9 @@ static void SGInstallSearchGlass(
     }
 
     CGFloat width =
-        MIN(400.0,
-            MAX(300.0,
-                CGRectGetWidth(view.bounds) - 16.0));
+        MIN(620.0,
+            MAX(340.0,
+                CGRectGetWidth(view.bounds) * 0.82));
 
     CGFloat height = 44.0;
 
