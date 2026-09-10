@@ -200,11 +200,16 @@ void LGRegisterMaterialHost(NSString *prefix,
     route.groupName = groupName;
     route.postInstall = [postInstall copy];
     [sMaterialHostRoutes addObject:route];
+
     // priority makes one host own each material
     [sMaterialHostRoutes sortUsingComparator:^NSComparisonResult(LGMaterialHostRoute *a,
                                                                    LGMaterialHostRoute *b) {
-        if (a.priority == b.priority) return [a.prefix compare:b.prefix];
-        return a.priority > b.priority ? NSOrderedAscending : NSOrderedDescending;
+        if (a.priority == b.priority)
+            return [a.prefix compare:b.prefix];
+
+        return a.priority > b.priority
+            ? NSOrderedAscending
+            : NSOrderedDescending;
     }];
 }
 
@@ -213,13 +218,27 @@ static void lgRouteMaterialHost(UIView *material) {
         LGRemoveGlassFromMaterial(material, kGlassKey);
         return;
     }
+
     for (LGMaterialHostRoute *route in sMaterialHostRoutes) {
-        if (!route.matcher(material)) continue;
+        if (!route.matcher(material))
+            continue;
+
         CGFloat radius = route.cornerRadiusProvider
-            ? route.cornerRadiusProvider(material) : -1.0;
-        LGLiveBackdropView *glass = LGInstallRegisteredGlassInMaterial(
-            material, kGlassKey, route.prefix, route.outset, radius, route.groupName);
-        if (glass && route.postInstall) route.postInstall(material, glass);
+            ? route.cornerRadiusProvider(material)
+            : -1.0;
+
+        LGLiveBackdropView *glass =
+            LGInstallRegisteredGlassInMaterial(
+                material,
+                kGlassKey,
+                route.prefix,
+                route.outset,
+                radius,
+                route.groupName);
+
+        if (glass && route.postInstall)
+            route.postInstall(material, glass);
+
         return;
     }
 }
@@ -230,36 +249,56 @@ static void lgReconcileInjectionsForDisable(void) {
         for (UIView *glass in sGlassRecs.keyEnumerator.allObjects) {
             LGGlassRec *r = [sGlassRecs objectForKey:glass];
             if (!r) continue;
+
             if (!lgHostEnabled(r.prefix)) {
-                if (r.material) LGRemoveGlassFromMaterial(r.material, kGlassKey);
-                else            [glass removeFromSuperview];
+                if (r.material)
+                    LGRemoveGlassFromMaterial(r.material, kGlassKey);
+                else
+                    [glass removeFromSuperview];
+
                 [sGlassRecs removeObjectForKey:glass];
             }
         }
     }
+
     for (UIView *v in sSuppressed.keyEnumerator.allObjects) {
         NSString *p = [sSuppressed objectForKey:v];
-        if (p && !lgHostEnabled(p)) { v.hidden = NO; [sSuppressed removeObjectForKey:v]; }
+
+        if (p && !lgHostEnabled(p)) {
+            v.hidden = NO;
+            [sSuppressed removeObjectForKey:v];
+        }
     }
 }
 
-static void lgEnablePrefsReloadCallback(CFNotificationCenterRef c, void *o, CFStringRef n,
-                                        const void *obj, CFDictionaryRef info) {
+static void lgEnablePrefsReloadCallback(CFNotificationCenterRef c,
+                                        void *o,
+                                        CFStringRef n,
+                                        const void *obj,
+                                        CFDictionaryRef info) {
     LGLog(@"prefs Reload received; invalidating SpringBoard host-enable cache");
     LGInvalidateGlassPreferenceCache();
 
     dispatch_async(dispatch_get_main_queue(), ^{
         lgReconcileInjectionsForDisable();
+
         LGLog(@"prefs Reload reconciled material hosts; extraHandlers=%lu",
               (unsigned long)sReloadHandlers.count);
-        for (void (^handler)(void) in [sReloadHandlers copy]) handler();
+
+        for (void (^handler)(void) in [sReloadHandlers copy])
+            handler();
     });
 }
 
-__attribute__((constructor)) static void lgGlassInitEnableObserver(void) {
-    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(),
-        NULL, lgEnablePrefsReloadCallback, CFSTR("dylv.liquidassprefs/Reload"),
-        NULL, CFNotificationSuspensionBehaviorCoalesce);
+__attribute__((constructor))
+static void lgGlassInitEnableObserver(void) {
+    CFNotificationCenterAddObserver(
+        CFNotificationCenterGetDarwinNotifyCenter(),
+        NULL,
+        lgEnablePrefsReloadCallback,
+        CFSTR("dylv.liquidassprefs/Reload"),
+        NULL,
+        CFNotificationSuspensionBehaviorCoalesce);
 }
 
 #pragma mark - shared material lifecycle
@@ -271,15 +310,32 @@ __attribute__((constructor)) static void lgGlassInitEnableObserver(void) {
     lgRouteMaterialHost((UIView *)self);
 }
 
-- (void)layoutSubviews { %orig; lgRouteMaterialHost((UIView *)self); }
+- (void)layoutSubviews {
+    %orig;
+    lgRouteMaterialHost((UIView *)self);
+}
 
 - (void)setHidden:(BOOL)hidden {
-    if (LGMaterialHasGlass((UIView *)self, kGlassKey)) hidden = YES;
+    if (LGMaterialHasGlass((UIView *)self, kGlassKey)) {
+        hidden = YES;
+    }
+
     %orig(hidden);
 }
 
-- (void)setFrame:(CGRect)frame   { %orig(frame);  LGResyncGlassGeometry((UIView *)self, kGlassKey); }
-- (void)setBounds:(CGRect)bounds { %orig(bounds); LGResyncGlassGeometry((UIView *)self, kGlassKey); }
-- (void)setCenter:(CGPoint)center{ %orig(center); LGResyncGlassGeometry((UIView *)self, kGlassKey); }
+- (void)setFrame:(CGRect)frame {
+    %orig(frame);
+    LGResyncGlassGeometry((UIView *)self, kGlassKey);
+}
+
+- (void)setBounds:(CGRect)bounds {
+    %orig(bounds);
+    LGResyncGlassGeometry((UIView *)self, kGlassKey);
+}
+
+- (void)setCenter:(CGPoint)center {
+    %orig(center);
+    LGResyncGlassGeometry((UIView *)self, kGlassKey);
+}
 
 %end
