@@ -1116,6 +1116,45 @@ static void LGEnsureMotionHighlights(void) {
     /* no-op */
 }
 
+
+/*
+ * Single-file SearchGlass compatibility helpers.
+ *
+ * These small helpers are normally supplied by the upstream Shared support
+ * layer. Keep them local here so the merged Tweak.xm remains self-contained.
+ */
+static NSHashTable<LGLiveBackdropView *> *sLGMotionGlasses = nil;
+static const CGFloat sLGSpecularAngle = -M_PI_4;
+
+/* SearchGlass does not expose the upstream preference UI, so use the
+ * renderer's default capture scale for non-special hosts. */
+static const CGFloat kLGClockCaptureScale = 1.0;
+static const CGFloat kLGPrefsControlScale = 1.0;
+
+static BOOL LGUsesPrefsControlCaptureScale(NSString *filterType) {
+    (void)filterType;
+    return NO;
+}
+
+static CGFloat LGScaleForSize(CGSize size) {
+    CGFloat shortest = MIN(size.width, size.height);
+    if (shortest <= 0.0) return 1.0;
+    /* Small surfaces benefit from a little extra capture resolution. */
+    return MAX(1.0, MIN(2.0, shortest < 160.0 ? 1.5 : 1.0));
+}
+
+static CGFloat LGNativeBlurRadiusForFilterType(NSString *filterType) {
+    /* Never add the old native overlay to SearchPill; it caused the
+     * partial-width horizontal band seen on iOS 16. */
+    if ([filterType hasPrefix:@"dylv.liquidglass.searchpill"])
+        return 0.0;
+    return 0.0;
+}
+
+static void LGEnsureFilterRefreshObserver(void) {
+    /* SearchGlass performs filter setup directly on each live glass view. */
+}
+
 static const CGFloat kLGGlassEdgeWidth = 1.0;
 
 @implementation LGLiveBackdropView {
@@ -1201,6 +1240,10 @@ static const CGFloat kLGGlassEdgeWidth = 1.0;
 
     self.autoresizingMask       = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     LGEnsureFilterRefreshObserver();
+    if (!sLGAllGlasses)
+        sLGAllGlasses = [NSHashTable weakObjectsHashTable];
+    if (!sLGMotionGlasses)
+        sLGMotionGlasses = [NSHashTable weakObjectsHashTable];
     [sLGAllGlasses addObject:self];
     LGEnsureMotionHighlights();
     [sLGMotionGlasses addObject:self];
