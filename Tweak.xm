@@ -491,6 +491,10 @@ static NSString *SGEffectiveFilterType(UIView *view) {
     self.glassView =
         [[SGLiveGlassView alloc] initWithFrame:self.bounds];
 
+    self.glassView.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.12];
+    self.glassView.layer.borderWidth = 0.65;
+    self.glassView.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.14].CGColor;
+
     /*
      * IMPORTANT:
      * The glass is visual only. It cannot steal touches from
@@ -862,6 +866,9 @@ static NSString *SGEffectiveFilterType(UIView *view) {
     self.activeSearchGlass = [[SGLiveGlassView alloc] initWithFrame:CGRectZero];
     self.activeSearchGlass.cornerRadius = 24.0;
     self.activeSearchGlass.userInteractionEnabled = NO;
+    self.activeSearchGlass.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.18];
+    self.activeSearchGlass.layer.borderWidth = 0.65;
+    self.activeSearchGlass.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.16].CGColor;
     [container addSubview:self.activeSearchGlass];
 
     // Native blur underneath guarantees a visible translucent glass surface
@@ -874,7 +881,7 @@ static NSString *SGEffectiveFilterType(UIView *view) {
     blur.userInteractionEnabled = NO;
     blur.layer.cornerRadius = 24.0;
     blur.clipsToBounds = YES;
-    [self.activeSearchGlass insertSubview:blur atSubviewIndex:0];
+    [self.activeSearchGlass addSubview:blur];
 
     UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
     self.activeCloseButton = close;
