@@ -1,7 +1,10 @@
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-function"
+#pragma clang diagnostic ignored "-Wunused-const-variable"
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
 #include <atomic>
 @import Darwin.sys.sysctl;
 @import Darwin.os.lock;
-#import <CoreMotion/CoreMotion.h>
 /*
  * SearchGlass
  * Liquid Glass renderer adapted from the public Liquid (Gl)ass project:
@@ -586,11 +589,14 @@ BOOL LGBackboardSafeModeActive(void) {
     [data getBytes:&state length:sizeof(state)];
     if (state.magic != 0x4c47534d || state.version != 1 || !state.disabled) return NO;
 
-    struct timeval bootTime = {};
-    size_t size = sizeof(bootTime);
-    int mib[2] = { CTL_KERN, KERN_BOOTTIME };
-    if (sysctl(mib, 2, &bootTime, &size, NULL, 0) != 0) return NO;
-    return state.bootTime == (int64_t)bootTime.tv_sec;
+    /*
+     * Avoid the Darwin sysctl module-only declarations in the iPhoneOS 16.5
+     * Objective-C++ SDK. systemUptime gives us a stable boot-time estimate
+     * without depending on CTL_KERN/KERN_BOOTTIME.
+     */
+    int64_t bootTime = (int64_t)(time(NULL) -
+                                 (time_t)NSProcessInfo.processInfo.systemUptime);
+    return state.bootTime == bootTime;
 }
 
 void LGClearBackboardSafeMode(void) {
@@ -634,7 +640,7 @@ NSString * const LGTintOverrideDark = @"dark";
 static NSString * const LGPrefsDidReloadInProcessNotification = @"dylv.liquidassprefs.InProcessReload";
 
 static NSDictionary<NSString *, id> *sLGCachedPreferences = nil;
-static os_unfair_lock sLGPrefsLock = OS_UNFAIR_LOCK_INIT;
+static NSObject *sLGPrefsLock = nil;
 static dispatch_once_t sLGPrefsSetupOnce;
 static dispatch_queue_t sLGLogQueue;
 static NSFileHandle *sLGLogHandle;
@@ -771,6 +777,7 @@ static void LGPreferencesChanged(CFNotificationCenterRef center,
 
 static void LGEnsurePreferenceCacheInitialized(void) {
     dispatch_once(&sLGPrefsSetupOnce, ^{
+        sLGPrefsLock = [NSObject new];
         LGReloadPreferences();
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(),
                                         NULL,
@@ -865,9 +872,9 @@ CGFloat LGEffectiveBannerBlur(CGFloat configuredBlur) {
 
 void LGReloadPreferences(void) {
     NSDictionary<NSString *, id> *dictionary = LGCopyPreferencesDictionary();
-    os_unfair_lock_lock(&sLGPrefsLock);
-    sLGCachedPreferences = dictionary;
-    os_unfair_lock_unlock(&sLGPrefsLock);
+    @synchronized (sLGPrefsLock) {
+        sLGCachedPreferences = dictionary;
+    }
 }
 
 void LGObservePreferenceChanges(dispatch_block_t block) {
@@ -884,9 +891,9 @@ static id LGPreferenceValue(NSString *key) {
     if (!key.length) return nil;
     LGEnsurePreferenceCacheInitialized();
     NSDictionary<NSString *, id> *preferences = nil;
-    os_unfair_lock_lock(&sLGPrefsLock);
-    preferences = sLGCachedPreferences;
-    os_unfair_lock_unlock(&sLGPrefsLock);
+    @synchronized (sLGPrefsLock) {
+        preferences = sLGCachedPreferences;
+    }
     return preferences[key];
 }
 
@@ -894,9 +901,9 @@ BOOL LGHasExplicitPreferenceValue(NSString *key) {
     if (!key.length) return NO;
     LGEnsurePreferenceCacheInitialized();
     NSDictionary<NSString *, id> *preferences = nil;
-    os_unfair_lock_lock(&sLGPrefsLock);
-    preferences = sLGCachedPreferences;
-    os_unfair_lock_unlock(&sLGPrefsLock);
+    @synchronized (sLGPrefsLock) {
+        preferences = sLGCachedPreferences;
+    }
     return preferences[key] != nil;
 }
 
@@ -1102,255 +1109,11 @@ static BOOL LGSpecularEnabledForFilterType(NSString *type) {
     return [value isKindOfClass:[NSNumber class]] ? [value boolValue] : YES;
 }
 
-static NSHashTable<LGLiveBackdropView *> *sLGMotionGlasses;
-static CMMotionManager *sLGMotionManager;
-static NSOperationQueue *sLGMotionQueue;
-static BOOL sLGMotionSetup;
-static BOOL sLGMotionRunning;
-static CGFloat sLGSpecularAngle = -M_PI_4;
-static CGFloat sLGTargetSpecularAngle = -M_PI_4;
-static CGFloat sLGLastTargetSpecularAngle = -M_PI_4;
-static CGFloat sLGLastAppliedSpecularAngle = -100.0;
-static CADisplayLink *sLGMotionDisplayLink;
-static BOOL sLGMotionEnabled;
-static CGFloat sLGMotionSensitivity = 2.0;
-static CGFloat sLGMotionLoggedSensitivity = -1.0;
-static CFStringRef const kLGMotionPrefsReloadNotification = CFSTR("dylv.liquidassprefs/Reload");
-
-static void LGApplyMotionHighlightAngle(void);
-static void LGRefreshMotionHighlights(void);
-static void LGEnsureFilterRefreshObserver(void);
-
-@interface LGMotionDisplayLinkTarget : NSObject
-- (void)tick:(CADisplayLink *)displayLink;
-@end
-
-static BOOL LGIsSpringBoardBundle(void) {
-    return [NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.apple.springboard"];
-}
-
-static void LGReloadMotionHighlightPreferences(void) {
-    id enabled = LGGlassPreferenceValue(@"Specular.Motion.Enabled");
-    id sensitivity = LGGlassPreferenceValue(@"Specular.Motion.Sensitivity");
-    BOOL previousEnabled = sLGMotionEnabled;
-    CGFloat previousSensitivity = sLGMotionSensitivity;
-    sLGMotionEnabled = [enabled respondsToSelector:@selector(boolValue)] ? [enabled boolValue] : NO;
-    CGFloat value = [sensitivity respondsToSelector:@selector(doubleValue)] ? [sensitivity doubleValue] : 2.0;
-    sLGMotionSensitivity = MAX(0.0, MIN(8.0, value));
-    if (sLGMotionLoggedSensitivity < 0.0 || previousEnabled != sLGMotionEnabled ||
-        fabs(previousSensitivity - sLGMotionSensitivity) > 0.01) {
-        sLGMotionLoggedSensitivity = sLGMotionSensitivity;
-        LGLog(@"motion highlights prefs enabled=%d sensitivity=%.2f", sLGMotionEnabled, sLGMotionSensitivity);
-    }
-}
-
-static void LGMotionPreferencesDidChange(CFNotificationCenterRef center, void *observer,
-                                         CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    (void)center; (void)observer; (void)name; (void)object; (void)userInfo;
-    dispatch_async(dispatch_get_main_queue(), ^{
-        LGInvalidateGlassPreferenceCache();
-        LGReloadMotionHighlightPreferences();
-        LGRefreshMotionHighlights();
-    });
-}
-
-static BOOL LGUsesDynamicRadiusType(NSString *filterType) {
-
-    return filterType.length &&
-           LGHostIdentifierForFilterType(filterType.UTF8String) != LGHostIdentifierClock;
-}
-
-static BOOL LGUsesPrefsControlCaptureScale(NSString *filterType) {
-    switch (LGHostIdentifierForFilterType(filterType.UTF8String)) {
-        case LGHostIdentifierPrefsSlider:
-        case LGHostIdentifierPrefsSwitch:
-        case LGHostIdentifierPrefsButton:
-        case LGHostIdentifierPrefsSegment:
-            return YES;
-        default:
-            return NO;
-    }
-}
-
-static CGFloat LGNativeBlurRadiusForFilterType(NSString *filterType) {
-    const LGHostDefinition *host = LGHostDefinitionForFilterType(filterType.UTF8String);
-    if (!host) return 0.0;
-    NSString *prefix = [NSString stringWithUTF8String:host->preferencePrefix];
-    id value = LGGlassPreferenceValue([prefix stringByAppendingString:@".Blur"]);
-    return [value respondsToSelector:@selector(doubleValue)]
-        ? MAX(0.0, [value doubleValue]) : host->blur;
-}
-
-static const CGFloat kLGScaleMax    = 0.75;
-static const CGFloat kLGScaleMin    = 0.25;
-
-static const CGFloat kLGClockCaptureScale = 0.50;
-
-static const CGFloat kLGPrefsControlScale = 1.50;
-static const CGFloat kLGDefaultScaleBudget = 8000.0;
-static CGFloat LGQualityValue(void) {
-    id value = LGGlassPreferenceValue(@"Global.Quality");
-    CGFloat quality = [value respondsToSelector:@selector(doubleValue)]
-        ? (CGFloat)[value doubleValue] : 1.0;
-    if (!isfinite(quality)) quality = 1.0;
-    return fmin(1.0, fmax(0.1, quality));
-}
-
-static CGFloat LGScaleBudget(void) {
-    return kLGDefaultScaleBudget * LGQualityValue();
-}
-
-static CGFloat LGScaleForSize(CGSize s) {
-    // area budget keeps total capture cost predictable
-    CGFloat area = s.width * s.height;
-    if (area <= 1.0) return kLGScaleMax;
-    CGFloat scale = sqrt(LGScaleBudget() / area);
-    return fmin(kLGScaleMax, fmax(kLGScaleMin, scale));
-}
-
-@interface LGLiveBackdropView ()
-- (void)updateSpecular;
-- (void)applySpecularAngle:(CGFloat)angle;
-- (void)reapplyFilterForParameterReload;
-@end
-
-static void LGParametersReloaded(CFNotificationCenterRef center, void *observer,
-                                 CFStringRef name, const void *object,
-                                 CFDictionaryRef userInfo) {
-    (void)center; (void)observer; (void)name; (void)object; (void)userInfo;
-    dispatch_async(dispatch_get_main_queue(), ^{
-
-        // clear cached prefs before rebuilding every live filter
-        LGInvalidateGlassPreferenceCache();
-        NSArray<LGLiveBackdropView *> *glasses = sLGAllGlasses.allObjects;
-        LGLog(@"render parameters ready; refreshing %lu live filters",
-              (unsigned long)glasses.count);
-        [CATransaction begin];
-        [CATransaction setDisableActions:YES];
-        for (LGLiveBackdropView *glass in glasses) {
-            [glass reapplyFilterForParameterReload];
-        }
-        [CATransaction commit];
-    });
-}
-
-static void LGEnsureFilterRefreshObserver(void) {
-    if (!sLGAllGlasses) sLGAllGlasses = [NSHashTable weakObjectsHashTable];
-    if (sLGFilterRefreshSetup) return;
-    sLGFilterRefreshSetup = YES;
-    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
-                                    LGParametersReloaded,
-                                    kLGParametersReloadedNotification, NULL,
-                                    CFNotificationSuspensionBehaviorDeliverImmediately);
-}
-
-static void LGApplyMotionHighlightAngle(void) {
-    if (sLGMotionGlasses.count == 0) return;
-    if (sLGMotionDisplayLink && sLGMotionDisplayLink.paused &&
-        fabs(sLGSpecularAngle - sLGLastAppliedSpecularAngle) < 0.001) return;
-    sLGLastAppliedSpecularAngle = sLGSpecularAngle;
-
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
-    for (LGLiveBackdropView *glass in sLGMotionGlasses.allObjects) {
-        UIWindow *window = glass.window;
-        if (!window || glass.hidden || glass.alpha <= 0.01 ||
-            window.hidden || window.alpha <= 0.01) continue;
-        CGRect bounds = glass.bounds;
-        if (CGRectIsEmpty(bounds) ||
-            !CGRectIntersectsRect(window.bounds, [glass convertRect:bounds toView:nil])) continue;
-        [glass applySpecularAngle:sLGSpecularAngle];
-    }
-    [CATransaction commit];
-}
-
-@implementation LGMotionDisplayLinkTarget
-- (void)tick:(CADisplayLink *)displayLink {
-    CGFloat dt = displayLink.targetTimestamp > displayLink.timestamp
-        ? displayLink.targetTimestamp - displayLink.timestamp : 1.0 / 60.0;
-    CGFloat delta = atan2(sin(sLGTargetSpecularAngle - sLGSpecularAngle),
-                          cos(sLGTargetSpecularAngle - sLGSpecularAngle));
-    if (fabs(delta) < 0.001) {
-        sLGSpecularAngle = sLGTargetSpecularAngle;
-        LGApplyMotionHighlightAngle();
-        displayLink.paused = YES;
-        return;
-    }
-    CGFloat response = 1.0 - exp(-14.0 * dt);
-    sLGSpecularAngle += delta * response;
-    LGApplyMotionHighlightAngle();
-}
-@end
-
-static void LGRefreshMotionHighlights(void) {
-    if (!sLGMotionSetup || !LGIsSpringBoardBundle()) return;
-    if (!sLGMotionEnabled) {
-        [sLGMotionManager stopDeviceMotionUpdates];
-        [sLGMotionDisplayLink invalidate];
-        sLGMotionDisplayLink = nil;
-        sLGMotionRunning = NO;
-        sLGSpecularAngle = -M_PI_4;
-        sLGTargetSpecularAngle = sLGSpecularAngle;
-        sLGLastAppliedSpecularAngle = -100.0;
-        LGApplyMotionHighlightAngle();
-        return;
-    }
-    if (sLGMotionRunning) return;
-
-    if (!sLGMotionQueue) {
-        sLGMotionQueue = [[NSOperationQueue alloc] init];
-        sLGMotionQueue.name = @"com.ngkhoi.liquidass.motion";
-        sLGMotionQueue.maxConcurrentOperationCount = 1;
-        sLGMotionQueue.qualityOfService = NSQualityOfServiceUtility;
-    }
-
-    CMAttitudeReferenceFrame frame = CMAttitudeReferenceFrameXArbitraryZVertical;
-
-    sLGMotionManager.deviceMotionUpdateInterval = 1.0 / 30.0;
-    static LGMotionDisplayLinkTarget *displayLinkTarget;
-    if (!displayLinkTarget) displayLinkTarget = [LGMotionDisplayLinkTarget new];
-    if (!sLGMotionDisplayLink) {
-        sLGMotionDisplayLink = [CADisplayLink displayLinkWithTarget:displayLinkTarget
-                                                           selector:@selector(tick:)];
-        [sLGMotionDisplayLink addToRunLoop:NSRunLoop.mainRunLoop
-                                   forMode:NSRunLoopCommonModes];
-    }
-    sLGMotionRunning = YES;
-    [sLGMotionManager startDeviceMotionUpdatesUsingReferenceFrame:frame
-                                                            toQueue:sLGMotionQueue
-                                                        withHandler:^(CMDeviceMotion *motion, NSError *error) {
-        if (!motion || error || !sLGMotionEnabled) return;
-        CMAttitude *attitude = motion.attitude;
-
-        CGFloat baseMotion = attitude.roll * 1.2 + attitude.pitch * 1.2 + attitude.yaw;
-        CGFloat target = baseMotion * (sLGMotionSensitivity * 1.2);
-        CGFloat delta = atan2(sin(target - sLGLastTargetSpecularAngle),
-                              cos(target - sLGLastTargetSpecularAngle));
-        if (fabs(delta) <= 0.001) return;
-        sLGLastTargetSpecularAngle = target;
-        sLGTargetSpecularAngle = target;
-        if (sLGMotionDisplayLink && sLGMotionDisplayLink.paused) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                sLGMotionDisplayLink.paused = NO;
-            });
-        }
-    }];
-    LGLog(@"motion highlights started reference=tilt+yaw rate=30Hz high-sensitivity");
-}
-
+/* Optional motion-highlight subsystem disabled in the single-file
+ * iPhoneOS16 build. The actual glass/refraction renderer does not depend on it.
+ */
 static void LGEnsureMotionHighlights(void) {
-    if (!LGIsSpringBoardBundle()) return;
-    if (!sLGMotionGlasses) sLGMotionGlasses = [NSHashTable weakObjectsHashTable];
-    if (!sLGMotionManager) sLGMotionManager = [CMMotionManager new];
-    if (!sLGMotionSetup) {
-        sLGMotionSetup = YES;
-        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
-                                        LGMotionPreferencesDidChange,
-                                        kLGMotionPrefsReloadNotification, NULL,
-                                        CFNotificationSuspensionBehaviorDeliverImmediately);
-    }
-    LGReloadMotionHighlightPreferences();
-    LGRefreshMotionHighlights();
+    /* no-op */
 }
 
 static const CGFloat kLGGlassEdgeWidth = 1.0;
