@@ -1,22 +1,17 @@
 TARGET := iphone:clang:latest:16.0
-
 ARCHS := arm64
 
 include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME := SearchGlass
 
-SearchGlass_FILES := Tweak.xm
+SearchGlass_FILES := Tweak.xm \
+    $(wildcard Shared/*.m) \
+    $(wildcard Shared/*.x)
 
 SearchGlass_CFLAGS := -fobjc-arc
-
-SearchGlass_FRAMEWORKS := UIKit
-
+SearchGlass_FRAMEWORKS := UIKit QuartzCore CoreGraphics CoreText CoreMotion
 SearchGlass_PRIVATE_FRAMEWORKS := Preferences
-
-SearchGlass_EXTRA_FILES += \
-    Resources/AboutIcon.png:/Library/Application Support/SearchGlass/AboutIcon.png \
-    Resources/SoftwareUpdateIcon.png:/Library/Application Support/SearchGlass/SoftwareUpdateIcon.png
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 
