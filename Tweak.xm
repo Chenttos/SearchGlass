@@ -20,7 +20,19 @@
 
 #pragma mark - Liquid Glass constants
 
-static NSString * const kSGFilterType = @"dylv.liquidglass.searchpill";
+/*
+ * STRONG REFRACTION PROFILE
+ *
+ * The upstream Liquid (Gl)ass renderer's default refraction host is
+ * considerably stronger than its SearchPill profile:
+ *   refractionScale = 2.6
+ *   refractiveIndex = 1.8
+ *   dispersion      = 2.0
+ *
+ * We use that registered renderer for SearchGlass without importing
+ * the Shared folder or changing the rest of this tweak.
+ */
+static NSString * const kSGFilterType = @"dylv.liquidglass.refraction";
 static NSString * const kSGGroupNamespace = @"dylv.liquidglass";
 static NSString * const kSGGroupName = @"SearchGlass";
 
@@ -125,9 +137,9 @@ static NSString *SGEffectiveFilterType(UIView *view) {
     _specular = [CAGradientLayer layer];
 
     _specular.colors = @[
-        (id)[UIColor colorWithWhite:1.0 alpha:0.30].CGColor,
+        (id)[UIColor colorWithWhite:1.0 alpha:0.38].CGColor,
         (id)[UIColor clearColor].CGColor,
-        (id)[UIColor colorWithWhite:1.0 alpha:0.12].CGColor
+        (id)[UIColor colorWithWhite:1.0 alpha:0.18].CGColor
     ];
 
     _specular.locations = @[
@@ -139,9 +151,9 @@ static NSString *SGEffectiveFilterType(UIView *view) {
     _specularBoost = [CAGradientLayer layer];
 
     _specularBoost.colors = @[
-        (id)[UIColor colorWithWhite:1.0 alpha:0.32].CGColor,
+        (id)[UIColor colorWithWhite:1.0 alpha:0.42].CGColor,
         (id)[UIColor clearColor].CGColor,
-        (id)[UIColor colorWithWhite:1.0 alpha:0.16].CGColor
+        (id)[UIColor colorWithWhite:1.0 alpha:0.22].CGColor
     ];
 
     _specularBoost.locations = @[
@@ -307,7 +319,9 @@ static NSString *SGEffectiveFilterType(UIView *view) {
          * through its registered filter type.
          */
 
-        SGSetValue(layer, @1.0, @"scale");
+        /* Keep full-resolution capture, but enlarge the sampled backdrop
+         * slightly to make the optical displacement more visible. */
+        SGSetValue(layer, @1.08, @"scale");
 
         NSString *filterType =
             SGEffectiveFilterType(self);
@@ -484,6 +498,8 @@ static NSString *SGEffectiveFilterType(UIView *view) {
      */
     self.glassView.userInteractionEnabled = NO;
     self.glassView.cornerRadius = 22.0;
+    /* Stronger optical sampling for the whole pill. */
+    SGSetValue(self.glassView.layer, @1.08, @"zoom");
 
     [self addSubview:self.glassView];
 
