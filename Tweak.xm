@@ -1143,6 +1143,16 @@ static CGFloat LGScaleForSize(CGSize size) {
     return MAX(1.0, MIN(2.0, shortest < 160.0 ? 1.5 : 1.0));
 }
 
+static BOOL LGUsesDynamicRadiusType(Class baseClass) {
+    (void)baseClass;
+    /*
+     * The upstream helper is only needed for system material subclasses.
+     * SearchGlass supplies its own explicit pill geometry, so dynamic radius
+     * discovery is not required here.
+     */
+    return NO;
+}
+
 static CGFloat LGNativeBlurRadiusForFilterType(NSString *filterType) {
     /* Never add the old native overlay to SearchPill; it caused the
      * partial-width horizontal band seen on iOS 16. */
