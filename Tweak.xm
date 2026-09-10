@@ -1143,8 +1143,8 @@ static CGFloat LGScaleForSize(CGSize size) {
     return MAX(1.0, MIN(2.0, shortest < 160.0 ? 1.5 : 1.0));
 }
 
-static BOOL LGUsesDynamicRadiusType(Class baseClass) {
-    (void)baseClass;
+static BOOL LGUsesDynamicRadiusType(NSString *base) {
+    (void)base;
     /*
      * The upstream helper is only needed for system material subclasses.
      * SearchGlass supplies its own explicit pill geometry, so dynamic radius
