@@ -3,8 +3,9 @@
  * Liquid Glass renderer adapted from the public Liquid (Gl)ass project:
  * https://github.com/winaviation-tweaks/liquidass
  *
- * Uses the same Liquid (Gl)ass render-server approach:
- * CABackdropLayer + CAFilter + live refraction + specular reflection.
+ * Uses a stable full-surface glass material for the Search pill.
+ * The pill is rendered as one clipped material so the backdrop always
+ * fills the complete capsule instead of producing a partial band.
  *
  * GPL-3.0 applies to code derived from Liquid (Gl)ass.
  */
@@ -21,84 +22,105 @@
 #pragma mark - Liquid Glass renderer
 
 /*
- * SearchGlass uses the upstream Liquid (Gl)ass renderer from:
- * https://github.com/winaviation-tweaks/liquidass
- *
- * The renderer supplies the live backdrop, refraction, specular
- * highlights and dynamic light/dark variants.
- *
- * Required upstream Shared files:
- *   LGHostRegistry.h
- *   LGFramework.h/.m
- *   LGGlassKit.h/.x
- *   LGLiquidMotion.h
- *   LGLiveBackdropView.h/.m
- *   LGSharedSupport.h/.m
+ * The previous implementation routed this small pill through
+ * CABackdropLayer/CAFilter. On this iOS 16 Settings hierarchy that path
+ * can produce a narrow horizontal capture band. The SearchGlass renderer
+ * below deliberately keeps the entire material inside the pill bounds.
  */
 
-#import "Shared/LGLiveBackdropView.h"
-#import "Shared/LGGlassKit.h"
-#import "Shared/LGHostRegistry.h"
-
-@interface SGLiveGlassView : LGLiveBackdropView
+@interface SGLiveGlassView : UIView
 @property(nonatomic, assign) CGFloat cornerRadius;
 @end
 
-@implementation SGLiveGlassView
+@implementation SGLiveGlassView {
+    UIVisualEffectView *_blurView;
+    UIView *_tintView;
+    CAGradientLayer *_specularLayer;
+    CAShapeLayer *_borderLayer;
+}
 
 - (instancetype)initWithFrame:(CGRect)frame {
-    self = [super initWithFrame:frame
-                       groupName:@"SearchGlass"
-                     filterType:@"dylv.liquidglass.searchpill"];
+    self = [super initWithFrame:frame];
     if (!self) return nil;
 
     self.backgroundColor = UIColor.clearColor;
     self.opaque = NO;
     self.userInteractionEnabled = NO;
-
     self.cornerRadius = MIN(CGRectGetWidth(frame), CGRectGetHeight(frame)) * 0.5;
 
-    self.lgShapeRect = self.bounds;
-    self.lgShapeCornerRadius = self.cornerRadius;
-    self.lgBackdropZoom = 1.035;
-
-    [self applyFilters];
+    [self buildGlass];
     return self;
+}
+
+- (void)buildGlass {
+    UIBlurEffectStyle style = UIBlurEffectStyleSystemMaterial;
+    if (@available(iOS 13.0, *)) {
+        style = UIBlurEffectStyleSystemChromeMaterial;
+    }
+
+    _blurView = [[UIVisualEffectView alloc]
+        initWithEffect:[UIBlurEffect effectWithStyle:style]];
+    _blurView.userInteractionEnabled = NO;
+    _blurView.clipsToBounds = YES;
+    [self addSubview:_blurView];
+
+    _tintView = [[UIView alloc] initWithFrame:CGRectZero];
+    _tintView.userInteractionEnabled = NO;
+    _tintView.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.12];
+    [self addSubview:_tintView];
+
+    _specularLayer = [CAGradientLayer layer];
+    _specularLayer.colors = @[
+        (id)[UIColor colorWithWhite:1.0 alpha:0.34].CGColor,
+        (id)[UIColor colorWithWhite:1.0 alpha:0.10].CGColor,
+        (id)[UIColor clearColor].CGColor,
+        (id)[UIColor colorWithWhite:1.0 alpha:0.08].CGColor
+    ];
+    _specularLayer.locations = @[@0.0, @0.18, @0.52, @1.0];
+    _specularLayer.startPoint = CGPointMake(0.0, 0.0);
+    _specularLayer.endPoint = CGPointMake(1.0, 1.0);
+    [self.layer addSublayer:_specularLayer];
+
+    _borderLayer = [CAShapeLayer layer];
+    _borderLayer.fillColor = UIColor.clearColor.CGColor;
+    _borderLayer.strokeColor = [UIColor colorWithWhite:1.0 alpha:0.42].CGColor;
+    _borderLayer.lineWidth = 0.75;
+    [self.layer addSublayer:_borderLayer];
 }
 
 - (void)setCornerRadius:(CGFloat)cornerRadius {
     _cornerRadius = cornerRadius;
-
-    self.layer.cornerRadius = cornerRadius;
-    self.layer.cornerCurve = kCACornerCurveContinuous;
-    self.lgShapeRect = self.bounds;
-    self.lgShapeCornerRadius = cornerRadius;
-    [self applyFilters];
+    [self setNeedsLayout];
 }
 
 - (void)layoutSubviews {
     [super layoutSubviews];
 
-    self.layer.cornerRadius = self.cornerRadius;
+    CGRect bounds = self.bounds;
+    CGFloat radius = MIN(self.cornerRadius, CGRectGetHeight(bounds) * 0.5);
+
+    self.layer.cornerRadius = radius;
     self.layer.cornerCurve = kCACornerCurveContinuous;
-    // IMPORTANT: the Liquid Glass shape is the entire pill.
-    self.lgShapeRect = self.bounds;
-    self.lgShapeCornerRadius = MIN(self.cornerRadius,
-                                   CGRectGetHeight(self.bounds) * 0.5);
-    self.lgBackdropZoom = 1.035;
+    self.layer.masksToBounds = YES;
 
-    [self applyFilters];
-}
+    _blurView.frame = bounds;
+    _blurView.layer.cornerRadius = radius;
+    _blurView.layer.cornerCurve = kCACornerCurveContinuous;
+    _blurView.clipsToBounds = YES;
 
-- (void)traitCollectionDidChange:(UITraitCollection *)previousTraitCollection {
-    [super traitCollectionDidChange:previousTraitCollection];
+    _tintView.frame = bounds;
+    _tintView.layer.cornerRadius = radius;
+    _tintView.layer.cornerCurve = kCACornerCurveContinuous;
 
-    if (@available(iOS 13.0, *)) {
-        if (previousTraitCollection.userInterfaceStyle !=
-            self.traitCollection.userInterfaceStyle) {
-            [self applyFilters];
-        }
-    }
+    _specularLayer.frame = bounds;
+    _specularLayer.cornerRadius = radius;
+    _specularLayer.masksToBounds = YES;
+
+    UIBezierPath *path =
+        [UIBezierPath bezierPathWithRoundedRect:CGRectInset(bounds, 0.4, 0.4)
+                                   cornerRadius:MAX(0.0, radius - 0.4)];
+    _borderLayer.frame = bounds;
+    _borderLayer.path = path.CGPath;
 }
 
 @end
