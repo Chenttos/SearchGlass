@@ -1,4 +1,7 @@
 #include <atomic>
+@import Darwin.sys.sysctl;
+@import Darwin.os.lock;
+#import <CoreMotion/CoreMotion.h>
 /*
  * SearchGlass
  * Liquid Glass renderer adapted from the public Liquid (Gl)ass project:
@@ -984,7 +987,7 @@ void LGSetImageStableCacheKey(UIImage *image, NSString *cacheKey) {
 #pragma mark - Embedded Liquid (Gl)ass LGLiveBackdropView.h
 
 
-void LGLog(NSString *format, ...) NS_FORMAT_FUNCTION(1, 2);
+void LGLog(NSString *format, ...);
 
 #if __has_include(<roothide.h>)
 #else
