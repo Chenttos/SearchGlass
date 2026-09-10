@@ -42,7 +42,6 @@
 
 @interface SGLiveGlassView : LGLiveBackdropView
 @property(nonatomic, assign) CGFloat cornerRadius;
-- (void)applyLiquidGlass;
 @end
 
 @implementation SGLiveGlassView
@@ -51,33 +50,20 @@
     self = [super initWithFrame:frame
                        groupName:@"SearchGlass"
                      filterType:@"dylv.liquidglass.searchpill"];
-
-    if (!self)
-        return nil;
+    if (!self) return nil;
 
     self.backgroundColor = UIColor.clearColor;
     self.opaque = NO;
     self.userInteractionEnabled = NO;
 
-    self.cornerRadius =
-        MIN(CGRectGetWidth(frame), CGRectGetHeight(frame)) * 0.5;
+    self.cornerRadius = MIN(CGRectGetWidth(frame), CGRectGetHeight(frame)) * 0.5;
 
-    [self applyLiquidGlass];
-
-    return self;
-}
-
-- (void)applyLiquidGlass {
-    /*
-     * The actual refraction/filter parameters are controlled by
-     * LGHostRegistry.h. We also slightly zoom the backdrop so the
-     * refraction is more visible on this small search pill.
-     */
     self.lgShapeRect = self.bounds;
     self.lgShapeCornerRadius = self.cornerRadius;
     self.lgBackdropZoom = 1.035;
 
     [self applyFilters];
+    return self;
 }
 
 - (void)setCornerRadius:(CGFloat)cornerRadius {
@@ -89,8 +75,7 @@
 
     self.lgShapeRect = self.bounds;
     self.lgShapeCornerRadius = cornerRadius;
-
-    [self applyLiquidGlass];
+    [self applyFilters];
 }
 
 - (void)layoutSubviews {
@@ -100,8 +85,11 @@
     self.layer.cornerCurve = kCACornerCurveContinuous;
     self.layer.masksToBounds = YES;
 
+    // IMPORTANT: the Liquid Glass shape is the entire pill.
     self.lgShapeRect = self.bounds;
-    self.lgShapeCornerRadius = self.cornerRadius;
+    self.lgShapeCornerRadius = MIN(self.cornerRadius,
+                                   CGRectGetHeight(self.bounds) * 0.5);
+    self.lgBackdropZoom = 1.035;
 
     [self applyFilters];
 }
@@ -112,7 +100,7 @@
     if (@available(iOS 13.0, *)) {
         if (previousTraitCollection.userInterfaceStyle !=
             self.traitCollection.userInterfaceStyle) {
-            [self applyLiquidGlass];
+            [self applyFilters];
         }
     }
 }
@@ -189,24 +177,6 @@
 }
 
 - (void)buildUI {
-    UIBlurEffect *buttonBlurEffect =
-        [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
-
-    UIVisualEffectView *buttonBlur =
-        [[UIVisualEffectView alloc] initWithEffect:buttonBlurEffect];
-
-    buttonBlur.frame = self.bounds;
-    buttonBlur.userInteractionEnabled = NO;
-    buttonBlur.autoresizingMask =
-        UIViewAutoresizingFlexibleWidth |
-        UIViewAutoresizingFlexibleHeight;
-    buttonBlur.layer.cornerRadius = 22.0;
-    buttonBlur.layer.cornerCurve = kCACornerCurveContinuous;
-    buttonBlur.clipsToBounds = YES;
-    buttonBlur.alpha = 0.72;
-
-    [self addSubview:buttonBlur];
-
     self.glassView =
         [[SGLiveGlassView alloc] initWithFrame:self.bounds];
 
