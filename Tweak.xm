@@ -14,9 +14,13 @@
 #import <objc/message.h>
 #import <objc/runtime.h>
 
+@interface UISearchBar (SGSearchPrivate)
+- (void)searchFieldBecomeFirstResponder;
+@end
+
 #pragma mark - Liquid Glass constants
 
-static NSString * const kSGFilterType = @"dylv.liquidglass.searchpill";
+static NSString * const kSGFilterType = @"dylv.liquidglass.refraction";
 static NSString * const kSGGroupNamespace = @"dylv.liquidglass";
 static NSString * const kSGGroupName = @"SearchGlass";
 
@@ -121,9 +125,9 @@ static NSString *SGEffectiveFilterType(UIView *view) {
     _specular = [CAGradientLayer layer];
 
     _specular.colors = @[
-        (id)[UIColor colorWithWhite:1.0 alpha:0.30].CGColor,
+        (id)[UIColor colorWithWhite:1.0 alpha:0.38].CGColor,
         (id)[UIColor clearColor].CGColor,
-        (id)[UIColor colorWithWhite:1.0 alpha:0.12].CGColor
+        (id)[UIColor colorWithWhite:1.0 alpha:0.18].CGColor
     ];
 
     _specular.locations = @[
@@ -135,9 +139,9 @@ static NSString *SGEffectiveFilterType(UIView *view) {
     _specularBoost = [CAGradientLayer layer];
 
     _specularBoost.colors = @[
-        (id)[UIColor colorWithWhite:1.0 alpha:0.32].CGColor,
+        (id)[UIColor colorWithWhite:1.0 alpha:0.42].CGColor,
         (id)[UIColor clearColor].CGColor,
-        (id)[UIColor colorWithWhite:1.0 alpha:0.16].CGColor
+        (id)[UIColor colorWithWhite:1.0 alpha:0.22].CGColor
     ];
 
     _specularBoost.locations = @[
@@ -303,7 +307,7 @@ static NSString *SGEffectiveFilterType(UIView *view) {
          * through its registered filter type.
          */
 
-        SGSetValue(layer, @1.0, @"scale");
+        SGSetValue(layer, @1.10, @"scale");
 
         NSString *filterType =
             SGEffectiveFilterType(self);
@@ -391,7 +395,34 @@ static NSString *SGEffectiveFilterType(UIView *view) {
 @property(nonatomic, strong) UIImageView *micIcon;
 @end
 
+@interface SGSearchButton ()
+- (UIViewController *)nearestViewController;
+- (UISearchController *)findSearchController:(UIViewController *)controller;
+- (UISearchBar *)findSearchBarInView:(UIView *)view;
+- (UIScrollView *)findScrollViewContainingView:(UIView *)target;
+@end
+
 @implementation SGSearchButton
+
+
+- (void)updateAppearance {
+    BOOL darkMode = NO;
+
+    if (@available(iOS 13.0, *)) {
+        darkMode =
+            (self.traitCollection.userInterfaceStyle ==
+             UIUserInterfaceStyleDark);
+    }
+
+    UIColor *color =
+        darkMode ? UIColor.whiteColor : UIColor.blackColor;
+
+    self.titleLabel.textColor = color;
+    self.searchIcon.tintColor = color;
+    self.micIcon.tintColor = color;
+}
+
+
 
 - (instancetype)initWithFrame:(CGRect)frame {
     self = [super initWithFrame:frame];
@@ -406,10 +437,9 @@ static NSString *SGEffectiveFilterType(UIView *view) {
 
     [self buildUI];
 
-    [self addTarget:self
-             action:@selector(searchPressed:)
-   forControlEvents:UIControlEventTouchUpInside];
-
+    // Handle the tap explicitly instead of relying only on UIControl's
+    // TouchUpInside delivery. Settings has private overlay views that can
+    // occasionally interfere with the normal control event path.
     [self addTarget:self
              action:@selector(sgTouchDown:)
    forControlEvents:UIControlEventTouchDown |
@@ -417,14 +447,31 @@ static NSString *SGEffectiveFilterType(UIView *view) {
 
     [self addTarget:self
              action:@selector(sgTouchUp:)
-   forControlEvents:UIControlEventTouchUpInside |
-                    UIControlEventTouchCancel |
+   forControlEvents:UIControlEventTouchCancel |
                     UIControlEventTouchDragExit];
 
     return self;
 }
 
 - (void)buildUI {
+    UIBlurEffect *buttonBlurEffect =
+        [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
+
+    UIVisualEffectView *buttonBlur =
+        [[UIVisualEffectView alloc] initWithEffect:buttonBlurEffect];
+
+    buttonBlur.frame = self.bounds;
+    buttonBlur.userInteractionEnabled = NO;
+    buttonBlur.autoresizingMask =
+        UIViewAutoresizingFlexibleWidth |
+        UIViewAutoresizingFlexibleHeight;
+    buttonBlur.layer.cornerRadius = 22.0;
+    buttonBlur.layer.cornerCurve = kCACornerCurveContinuous;
+    buttonBlur.clipsToBounds = YES;
+    buttonBlur.alpha = 0.72;
+
+    [self addSubview:buttonBlur];
+
     self.glassView =
         [[SGLiveGlassView alloc] initWithFrame:self.bounds];
 
@@ -434,7 +481,7 @@ static NSString *SGEffectiveFilterType(UIView *view) {
      * the SGSearchButton underneath it.
      */
     self.glassView.userInteractionEnabled = NO;
-    self.glassView.cornerRadius = 14.0;
+    self.glassView.cornerRadius = 22.0;
 
     [self addSubview:self.glassView];
 
@@ -503,6 +550,8 @@ static NSString *SGEffectiveFilterType(UIView *view) {
     self.micIcon.userInteractionEnabled = NO;
 
     [self addSubview:self.micIcon];
+
+    [self updateAppearance];
 }
 
 - (void)layoutSubviews {
@@ -516,7 +565,7 @@ static NSString *SGEffectiveFilterType(UIView *view) {
 
     self.glassView.frame = self.bounds;
     self.glassView.cornerRadius =
-        MIN(14.0, height * 0.5);
+        MIN(22.0, height * 0.5);
 
     self.searchIcon.frame =
         CGRectMake(11.0,
@@ -535,6 +584,32 @@ static NSString *SGEffectiveFilterType(UIView *view) {
                    0.0,
                    MAX(0.0, width - 72.0),
                    height);
+}
+
+- (void)touchesEnded:(NSSet<UITouch *> *)touches
+             withEvent:(UIEvent *)event {
+    [super touchesEnded:touches withEvent:event];
+
+    UITouch *touch = touches.anyObject;
+    CGPoint point = [touch locationInView:self];
+
+    if ([self pointInside:point withEvent:event]) {
+        [self sgTouchUp:self];
+        [self searchPressed:self];
+    } else {
+        [self sgTouchUp:self];
+    }
+}
+
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches
+                withEvent:(UIEvent *)event {
+    [super touchesCancelled:touches withEvent:event];
+    [self sgTouchUp:self];
+}
+
+- (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
+    // Keep the complete visible pill tappable, including its glass edges.
+    return CGRectContainsPoint(self.bounds, point);
 }
 
 - (void)sgTouchDown:(id)sender {
@@ -560,66 +635,119 @@ static NSString *SGEffectiveFilterType(UIView *view) {
 #pragma mark - Search action
 
 - (void)searchPressed:(id)sender {
-    UIViewController *vc =
-        [self nearestViewController];
-
+    UIViewController *vc = [self nearestViewController];
     if (!vc)
         return;
 
-    UINavigationController *navigationController =
-        vc.navigationController;
+    UINavigationController *nav = vc.navigationController;
 
-    if (navigationController &&
-        navigationController.viewControllers.count > 1) {
-
-        [navigationController
-            popToRootViewControllerAnimated:YES];
+    // The real Settings search lives on the root controller.
+    if (nav && nav.viewControllers.count > 1) {
+        [nav popToRootViewControllerAnimated:YES];
     }
 
     dispatch_after(
-        dispatch_time(DISPATCH_TIME_NOW,
-                      (int64_t)(0.30 * NSEC_PER_SEC)),
-        dispatch_get_main_queue(),
-        ^{
+        dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.20 * NSEC_PER_SEC)),
+        dispatch_get_main_queue(), ^{
             UIViewController *root =
-                navigationController
-                ? navigationController.viewControllers.firstObject
-                : vc;
+                nav ? nav.viewControllers.firstObject : vc;
 
             if (!root)
                 return;
 
-            UISearchBar *searchBar =
-                [self findSearchBarInView:root.view];
+            // 1. Use the actual UISearchBar when it is already loaded.
+            UISearchBar *bar = [self findSearchBarInView:root.view];
 
-            if (searchBar) {
+            if (bar) {
                 UIScrollView *scroll =
-                    [self findScrollViewContainingView:searchBar];
+                    [self findScrollViewContainingView:bar];
 
                 if (scroll) {
                     CGRect rect =
-                        [searchBar convertRect:searchBar.bounds
-                                        toView:scroll];
+                        [bar convertRect:bar.bounds toView:scroll];
 
-                    [scroll
-                        scrollRectToVisible:rect
-                        animated:YES];
+                    [scroll scrollRectToVisible:rect animated:YES];
                 }
 
-                [searchBar becomeFirstResponder];
+                if ([bar respondsToSelector:
+                     @selector(searchFieldBecomeFirstResponder)]) {
+                    [bar searchFieldBecomeFirstResponder];
+                } else {
+                    [bar becomeFirstResponder];
+                }
                 return;
             }
 
+            // 2. Some Settings versions keep the UISearchController in
+            // the controller hierarchy rather than directly in the view.
+            UISearchController *searchController =
+                [self findSearchController:root];
+
+            if (searchController) {
+                searchController.active = YES;
+
+                UISearchBar *searchBar =
+                    searchController.searchBar;
+
+                if ([searchBar respondsToSelector:
+                     @selector(searchFieldBecomeFirstResponder)]) {
+                    [searchBar searchFieldBecomeFirstResponder];
+                } else {
+                    [searchBar becomeFirstResponder];
+                }
+                return;
+            }
+
+            // 3. The search UI can be attached to a window/scene.
+            if (@available(iOS 13.0, *)) {
+                for (UIScene *scene in
+                     UIApplication.sharedApplication.connectedScenes) {
+
+                    if (![scene isKindOfClass:[UIWindowScene class]])
+                        continue;
+
+                    if (scene.activationState ==
+                        UISceneActivationStateUnattached)
+                        continue;
+
+                    UIWindowScene *windowScene =
+                        (UIWindowScene *)scene;
+
+                    for (UIWindow *window in windowScene.windows) {
+                        UISearchBar *windowBar =
+                            [self findSearchBarInView:window];
+
+                        if (!windowBar)
+                            continue;
+
+                        if ([windowBar respondsToSelector:
+                             @selector(searchFieldBecomeFirstResponder)]) {
+                            [windowBar searchFieldBecomeFirstResponder];
+                        } else {
+                            [windowBar becomeFirstResponder];
+                        }
+                        return;
+                    }
+                }
+            }
+
+            // 4. Settings may finish creating its search bar a little later.
             dispatch_after(
                 dispatch_time(DISPATCH_TIME_NOW,
-                              (int64_t)(0.25 * NSEC_PER_SEC)),
-                dispatch_get_main_queue(),
-                ^{
+                              (int64_t)(0.30 * NSEC_PER_SEC)),
+                dispatch_get_main_queue(), ^{
                     UISearchBar *retry =
                         [self findSearchBarInView:root.view];
 
-                    if (retry)
+                    if (!retry)
+                        return;
+
+                    if ([retry respondsToSelector:
+                         @selector(searchFieldBecomeFirstResponder)]) {
+                        [retry searchFieldBecomeFirstResponder];
+                    } else {
                         [retry becomeFirstResponder];
+                    }
                 });
         });
 }
@@ -632,11 +760,37 @@ static NSString *SGEffectiveFilterType(UIView *view) {
     while (responder) {
         responder = [responder nextResponder];
 
-        if ([responder
-             isKindOfClass:[UIViewController class]]) {
-
+        if ([responder isKindOfClass:[UIViewController class]]) {
             return (UIViewController *)responder;
         }
+    }
+
+    return nil;
+}
+
+- (UISearchController *)findSearchController:
+    (UIViewController *)controller {
+
+    if (!controller)
+        return nil;
+
+    if ([controller isKindOfClass:[UISearchController class]])
+        return (UISearchController *)controller;
+
+    for (UIViewController *child in controller.childViewControllers) {
+        UISearchController *found =
+            [self findSearchController:child];
+
+        if (found)
+            return found;
+    }
+
+    if (controller.presentedViewController) {
+        UISearchController *found =
+            [self findSearchController:controller.presentedViewController];
+
+        if (found)
+            return found;
     }
 
     return nil;
@@ -689,22 +843,73 @@ static BOOL SGIsMainSettingsController(
     if (!controller)
         return NO;
 
-    Class psClass =
-        NSClassFromString(@"PSListController");
+    Class psClass = NSClassFromString(@"PSListController");
 
     if (!psClass ||
         ![controller isKindOfClass:psClass]) {
+        return NO;
+    }
+
+    NSString *className = NSStringFromClass(controller.class);
+
+    /*
+     * Settings has used more than one root controller name across
+     * iOS versions. Prefer the explicit root names, but keep the
+     * navigation-stack fallback so the button still appears on the
+     * actual Settings home page.
+     */
+    if ([className isEqualToString:@"PSRootListController"] ||
+        [className isEqualToString:@"PSRootController"]) {
+        UINavigationController *nav = controller.navigationController;
+
+        if (!nav ||
+            nav.viewControllers.firstObject == controller) {
+            return YES;
+        }
 
         return NO;
     }
 
-    NSString *className =
-        NSStringFromClass(controller.class);
+    /*
+     * Fallback for iOS versions where the Settings root controller
+     * has another private class name:
+     *
+     * - must be a PSListController
+     * - must be the first controller in the navigation stack
+     * - must be the only controller currently pushed
+     * - search-related controllers are explicitly rejected
+     */
+    UINavigationController *nav = controller.navigationController;
 
-    if ([className containsString:@"Search"])
+    if (!nav)
         return NO;
 
+    if (nav.viewControllers.firstObject != controller)
+        return NO;
+
+    if (nav.viewControllers.count != 1)
+        return NO;
+
+    if ([className rangeOfString:@"Search"
+                         options:NSCaseInsensitiveSearch].location != NSNotFound) {
+        return NO;
+    }
+
     return YES;
+}
+
+static void SGRemoveSearchGlass(
+    UIViewController *controller
+) {
+    if (!controller)
+        return;
+
+    UIView *view = controller.view;
+    SGSearchButton *button =
+        (SGSearchButton *)[view viewWithTag:kSGSearchGlassTag];
+
+    if (button)
+        [button removeFromSuperview];
 }
 
 static void SGInstallSearchGlass(
@@ -726,15 +931,12 @@ static void SGInstallSearchGlass(
         return;
     }
 
-    /*
-     * Smaller than the old 316 x 44 version.
-     */
     CGFloat width =
-        MIN(316.0,
-            MAX(260.0,
-                CGRectGetWidth(view.bounds) - 32.0));
+        MIN(400.0,
+            MAX(300.0,
+                CGRectGetWidth(view.bounds) - 16.0));
 
-    CGFloat height = 40.0;
+    CGFloat height = 44.0;
 
     CGFloat x =
         (CGRectGetWidth(view.bounds) - width) * 0.5;
@@ -764,7 +966,187 @@ static void SGInstallSearchGlass(
 
     [view addSubview:button];
     [view bringSubviewToFront:button];
+
+    // Ensure all visible subviews of the control are non-interactive so the
+    // control itself always receives the tap.
+    button.glassView.userInteractionEnabled = NO;
+    button.searchIcon.userInteractionEnabled = NO;
+    button.titleLabel.userInteractionEnabled = NO;
+    button.micIcon.userInteractionEnabled = NO;
 }
+
+
+#pragma mark - General icons
+
+static NSString * const kSGAboutIconPath =
+    @"/Library/Application Support/SearchGlass/AboutIcon.png";
+static NSString * const kSGSoftwareUpdateIconPath =
+    @"/Library/Application Support/SearchGlass/SoftwareUpdateIcon.png";
+
+static BOOL SGIsGeneralController(UIViewController *controller) {
+    if (!controller)
+        return NO;
+
+    NSString *title = controller.title;
+    if (!title.length)
+        title = controller.navigationItem.title;
+
+    if ([title isEqualToString:@"General"])
+        return YES;
+
+    /*
+     * Some Settings versions don't expose the title on the
+     * controller itself. In that case use the navigation item.
+     */
+    NSString *navTitle = controller.navigationItem.title;
+    return [navTitle isEqualToString:@"General"];
+}
+
+static UIImage *SGLoadGeneralAsset(NSString *path) {
+    if (!path.length)
+        return nil;
+
+    /*
+     * Rootless jailbreaks can expose /Library through the bootstrap,
+     * while some installations keep the same files explicitly under
+     * /var/jb/Library. Try both locations so the custom artwork is
+     * reliably found after installation.
+     */
+    UIImage *image = [UIImage imageWithContentsOfFile:path];
+    if (image)
+        return image;
+
+    if ([path hasPrefix:@"/Library/"]) {
+        NSString *rootlessPath =
+            [@"/var/jb" stringByAppendingString:path];
+
+        image =
+            [UIImage imageWithContentsOfFile:rootlessPath];
+
+        if (image)
+            return image;
+    }
+
+    return nil;
+}
+
+static UIImage *SGRoundedImage(UIImage *image, CGFloat size, CGFloat radius) {
+    if (!image)
+        return nil;
+
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(size, size), NO, 0.0);
+
+    CGRect rect = CGRectMake(0.0, 0.0, size, size);
+    UIBezierPath *path =
+        [UIBezierPath bezierPathWithRoundedRect:rect
+                                   cornerRadius:radius];
+
+    [path addClip];
+
+    [image drawInRect:rect];
+
+    UIImage *result = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+
+    return result;
+}
+
+static UITableView *SGFindSettingsTableView(UIView *view) {
+    if (!view)
+        return nil;
+
+    if ([view isKindOfClass:[UITableView class]])
+        return (UITableView *)view;
+
+    for (UIView *subview in view.subviews) {
+        UITableView *table = SGFindSettingsTableView(subview);
+        if (table)
+            return table;
+    }
+
+    return nil;
+}
+
+static UITableViewCell *SGFindGeneralCell(UITableView *table,
+                                          NSString *text) {
+    if (!table)
+        return nil;
+
+    for (UITableViewCell *cell in table.visibleCells) {
+        if ([cell.textLabel.text isEqualToString:text])
+            return cell;
+    }
+
+    for (UIView *subview in table.subviews) {
+        if (![subview isKindOfClass:[UITableViewCell class]])
+            continue;
+
+        UITableViewCell *cell = (UITableViewCell *)subview;
+
+        if ([cell.textLabel.text isEqualToString:text])
+            return cell;
+    }
+
+    return nil;
+}
+
+static void SGApplyGeneralIcon(UITableViewCell *cell,
+                               NSString *path) {
+    if (!cell)
+        return;
+
+    UIImage *image = SGLoadGeneralAsset(path);
+
+    /*
+     * Only use the supplied SearchGlass icons.
+     * No SF Symbols are used as a fallback.
+     */
+    if (!image) {
+        cell.imageView.image = nil;
+        return;
+    }
+
+    /*
+     * Smaller footprint than the previous version and rounded like
+     * the newer iOS Settings design.
+     */
+    UIImage *rounded =
+        SGRoundedImage(image, 18.0, 4.5);
+
+    cell.imageView.image = rounded;
+    cell.imageView.contentMode = UIViewContentModeScaleAspectFit;
+    cell.imageView.clipsToBounds = YES;
+    cell.imageView.layer.cornerRadius = 4.5;
+    cell.imageView.layer.cornerCurve = kCACornerCurveContinuous;
+
+    /*
+     * Force a compact native-sized imageView footprint.
+     * The cell remains completely native and keeps its own layout.
+     */
+    cell.imageView.bounds =
+        CGRectMake(0.0, 0.0, 18.0, 18.0);
+}
+
+static void SGApplyGeneralIcons(UIViewController *controller) {
+    if (!SGIsGeneralController(controller))
+        return;
+
+    UITableView *table =
+        SGFindSettingsTableView(controller.view);
+
+    if (!table)
+        return;
+
+    UITableViewCell *about =
+        SGFindGeneralCell(table, @"About");
+
+    UITableViewCell *software =
+        SGFindGeneralCell(table, @"Software Update");
+
+    SGApplyGeneralIcon(about, kSGAboutIconPath);
+    SGApplyGeneralIcon(software, kSGSoftwareUpdateIconPath);
+}
+
 
 #pragma mark - Logos hooks
 
@@ -776,10 +1158,23 @@ static void SGInstallSearchGlass(
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
 
-    if (!SGIsMainSettingsController(self))
-        return;
+    if (SGIsMainSettingsController(self)) {
+        SGInstallSearchGlass(self);
+    } else {
+        SGRemoveSearchGlass(self);
+    }
 
-    SGInstallSearchGlass(self);
+    if (SGIsGeneralController(self)) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            SGApplyGeneralIcons(self);
+        });
+    }
+}
+
+- (void)viewDidLayoutSubviews {
+    %orig;
+
+    SGApplyGeneralIcons(self);
 }
 
 %end
@@ -801,8 +1196,18 @@ static void SGInstallSearchGlass(
     UIViewController *top =
         self.topViewController;
 
-    if (SGIsMainSettingsController(top))
+    if (SGIsMainSettingsController(top)) {
         SGInstallSearchGlass(top);
+    } else {
+        /*
+         * Remove it while any child Settings page is visible.
+         * This guarantees the pill cannot remain visible on
+         * sub-pages during navigation/interactive transitions.
+         */
+        for (UIViewController *controller in self.viewControllers) {
+            SGRemoveSearchGlass(controller);
+        }
+    }
 }
 
 %end
