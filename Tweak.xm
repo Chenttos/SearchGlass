@@ -20,19 +20,15 @@
 
 #pragma mark - Liquid Glass constants
 
-/*
- * STRONG REFRACTION PROFILE
- *
- * The upstream Liquid (Gl)ass renderer's default refraction host is
- * considerably stronger than its SearchPill profile:
- *   refractionScale = 2.6
- *   refractiveIndex = 1.8
- *   dispersion      = 2.0
- *
- * We use that registered renderer for SearchGlass without importing
- * the Shared folder or changing the rest of this tweak.
- */
 static NSString * const kSGFilterType = @"dylv.liquidglass.refraction";
+
+// Stronger glass tuning. These are applied directly to the filter/layer
+// when the private renderer accepts the corresponding parameters.
+static const CGFloat kSGRefractionScale = 3.20;
+static const CGFloat kSGRefractiveIndex = 1.72;
+static const CGFloat kSGDispersionStrength = 3.20;
+static const CGFloat kSGGlassThickness = 132.0;
+static const CGFloat kSGGlassZoom = 1.12;
 static NSString * const kSGGroupNamespace = @"dylv.liquidglass";
 static NSString * const kSGGroupName = @"SearchGlass";
 
@@ -137,9 +133,9 @@ static NSString *SGEffectiveFilterType(UIView *view) {
     _specular = [CAGradientLayer layer];
 
     _specular.colors = @[
-        (id)[UIColor colorWithWhite:1.0 alpha:0.38].CGColor,
+        (id)[UIColor colorWithWhite:1.0 alpha:0.36].CGColor,
         (id)[UIColor clearColor].CGColor,
-        (id)[UIColor colorWithWhite:1.0 alpha:0.18].CGColor
+        (id)[UIColor colorWithWhite:1.0 alpha:0.15].CGColor
     ];
 
     _specular.locations = @[
@@ -151,9 +147,9 @@ static NSString *SGEffectiveFilterType(UIView *view) {
     _specularBoost = [CAGradientLayer layer];
 
     _specularBoost.colors = @[
-        (id)[UIColor colorWithWhite:1.0 alpha:0.42].CGColor,
+        (id)[UIColor colorWithWhite:1.0 alpha:0.40].CGColor,
         (id)[UIColor clearColor].CGColor,
-        (id)[UIColor colorWithWhite:1.0 alpha:0.22].CGColor
+        (id)[UIColor colorWithWhite:1.0 alpha:0.20].CGColor
     ];
 
     _specularBoost.locations = @[
@@ -231,7 +227,7 @@ static NSString *SGEffectiveFilterType(UIView *view) {
     if (!blur)
         return;
 
-    SGSetValue(blur, @2.0, @"inputRadius");
+    SGSetValue(blur, @0.8, @"inputRadius");
     SGSetValue(blur, @YES, @"inputNormalizeEdges");
 
     if (!_nativeBlurLayer) {
@@ -308,20 +304,12 @@ static NSString *SGEffectiveFilterType(UIView *view) {
                    @"ignoresScreenClip");
 
         /*
-         * SearchPill in LGHostRegistry:
-         *
-         * refraction       = 1.6
-         * refractiveIndex  = 1.70
-         * blur             = 1.0
-         * specular         = 1.0
-         *
-         * The actual Liquid (Gl)ass filter consumes these parameters
-         * through its registered filter type.
+         * Strong refraction tuning.
+         * Keep everything inside this tweak: no external renderer changes
+         * are required here. Unsupported private keys are safely ignored.
          */
-
-        /* Keep full-resolution capture, but enlarge the sampled backdrop
-         * slightly to make the optical displacement more visible. */
-        SGSetValue(layer, @1.08, @"scale");
+        SGSetValue(layer, @(kSGGlassZoom), @"scale");
+        SGSetValue(layer, @(kSGGlassZoom), @"zoom");
 
         NSString *filterType =
             SGEffectiveFilterType(self);
@@ -342,6 +330,17 @@ static NSString *SGEffectiveFilterType(UIView *view) {
         }
 
         if (glassFilter) {
+            // Push the refraction parameters as far as the current
+            // CAFilter implementation exposes them. SGSetValue is
+            // exception-safe, so this remains compatible with builds
+            // that do not expose one or more of these keys.
+            SGSetValue(glassFilter, @(kSGRefractionScale), @"refractionScale");
+            SGSetValue(glassFilter, @(kSGRefractiveIndex), @"refractiveIndex");
+            SGSetValue(glassFilter, @(kSGDispersionStrength), @"dispersionStrength");
+            SGSetValue(glassFilter, @(kSGGlassThickness), @"glassThickness");
+            SGSetValue(glassFilter, @1.0, @"specularOpacity");
+            SGSetValue(glassFilter, @0.75, @"blur");
+
             layer.filters = @[glassFilter];
             self.liquidFilterAvailable = YES;
 
@@ -401,6 +400,256 @@ static NSString *SGEffectiveFilterType(UIView *view) {
 @end
 
 #pragma mark - Search button
+
+
+#pragma mark - iOS 26-style search presentation
+
+static const NSInteger kSGSearchOverlayTag = 0x53474F56;
+
+@interface SGSearchOverlay : UIControl <UITextFieldDelegate>
+@property(nonatomic, strong) SGLiveGlassView *glassView;
+@property(nonatomic, strong) UIImageView *searchIcon;
+@property(nonatomic, strong) UIImageView *micIcon;
+@property(nonatomic, strong) UITextField *textField;
+@property(nonatomic, strong) UIButton *closeButton;
+@property(nonatomic, weak) UISearchBar *nativeSearchBar;
+@property(nonatomic, weak) UIView *hostView;
+- (void)attachToView:(UIView *)view searchBar:(UISearchBar *)bar;
+- (void)removeOverlay;
+@end
+
+@implementation SGSearchOverlay
+
+- (instancetype)initWithFrame:(CGRect)frame {
+    self = [super initWithFrame:frame];
+    if (!self) return nil;
+
+    self.backgroundColor = UIColor.clearColor;
+    self.opaque = NO;
+    self.userInteractionEnabled = YES;
+
+    self.glassView = [[SGLiveGlassView alloc] initWithFrame:self.bounds];
+    self.glassView.userInteractionEnabled = NO;
+    self.glassView.cornerRadius = MIN(22.0, CGRectGetHeight(self.bounds) * 0.5);
+    [self addSubview:self.glassView];
+
+    UIImageSymbolConfiguration *iconConfig =
+        [UIImageSymbolConfiguration configurationWithPointSize:17.0
+                                                         weight:UIImageSymbolWeightRegular];
+
+    self.searchIcon = [[UIImageView alloc]
+        initWithImage:[UIImage systemImageNamed:@"magnifyingglass"
+                              withConfiguration:iconConfig]];
+    self.searchIcon.userInteractionEnabled = NO;
+    self.searchIcon.contentMode = UIViewContentModeScaleAspectFit;
+    [self addSubview:self.searchIcon];
+
+    self.textField = [[UITextField alloc] initWithFrame:CGRectZero];
+    self.textField.font = [UIFont systemFontOfSize:17.0 weight:UIFontWeightRegular];
+    self.textField.textColor = UIColor.labelColor;
+    self.textField.tintColor = UIColor.systemBlueColor;
+    self.textField.placeholder = @"Search";
+    self.textField.borderStyle = UITextBorderStyleNone;
+    self.textField.backgroundColor = UIColor.clearColor;
+    self.textField.clearButtonMode = UITextFieldViewModeNever;
+    self.textField.returnKeyType = UIReturnKeySearch;
+    self.textField.delegate = self;
+    [self.textField addTarget:self
+                       action:@selector(textChanged:)
+             forControlEvents:UIControlEventEditingChanged];
+    [self addSubview:self.textField];
+
+    self.micIcon = [[UIImageView alloc]
+        initWithImage:[UIImage systemImageNamed:@"mic"
+                              withConfiguration:iconConfig]];
+    self.micIcon.userInteractionEnabled = NO;
+    self.micIcon.contentMode = UIViewContentModeScaleAspectFit;
+    [self addSubview:self.micIcon];
+
+    self.closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    UIImage *xImage =
+        [UIImage systemImageNamed:@"xmark"
+                withConfiguration:[UIImageSymbolConfiguration
+                    configurationWithPointSize:21.0
+                                          weight:UIImageSymbolWeightMedium]];
+    [self.closeButton setImage:xImage forState:UIControlStateNormal];
+    self.closeButton.tintColor = UIColor.labelColor;
+    self.closeButton.backgroundColor = UIColor.clearColor;
+    self.closeButton.accessibilityLabel = @"Cancel";
+    [self.closeButton addTarget:self
+                         action:@selector(closePressed:)
+               forControlEvents:UIControlEventTouchUpInside];
+    [self addSubview:self.closeButton];
+
+    [[NSNotificationCenter defaultCenter]
+        addObserver:self
+           selector:@selector(sgKeyboardFrameChanged:)
+               name:UIKeyboardWillChangeFrameNotification
+             object:nil];
+
+    [[NSNotificationCenter defaultCenter]
+        addObserver:self
+           selector:@selector(sgKeyboardFrameChanged:)
+               name:UIKeyboardWillHideNotification
+             object:nil];
+
+    return self;
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+
+    CGFloat h = CGRectGetHeight(self.bounds);
+    CGFloat totalW = CGRectGetWidth(self.bounds);
+    CGFloat pillW = MAX(1.0, totalW - 52.0);
+    CGFloat r = MIN(22.0, h * 0.5);
+
+    self.glassView.frame = CGRectMake(0.0, 0.0, pillW, h);
+    self.glassView.cornerRadius = r;
+
+    self.searchIcon.frame = CGRectMake(14.0, floor((h - 20.0) * 0.5), 20.0, 20.0);
+    self.micIcon.frame = CGRectMake(pillW - 38.0, floor((h - 20.0) * 0.5), 20.0, 20.0);
+
+    self.textField.frame = CGRectMake(43.0, 0.0, MAX(0.0, pillW - 88.0), h);
+
+    // Separate round cancel button, matching the first reference image.
+    self.closeButton.frame = CGRectMake(pillW + 8.0, 0.0, 44.0, 44.0);
+}
+
+- (void)attachToView:(UIView *)view searchBar:(UISearchBar *)bar {
+    if (!view || !bar) return;
+
+    self.hostView = view;
+    self.nativeSearchBar = bar;
+    CGFloat totalWidth = MIN(700.0, CGRectGetWidth(view.bounds) - 8.0);
+    self.frame = CGRectMake(4.0,
+                            MAX(12.0, CGRectGetHeight(view.bounds) - 62.0),
+                            totalWidth,
+                            44.0);
+    self.autoresizingMask =
+        UIViewAutoresizingFlexibleWidth |
+        UIViewAutoresizingFlexibleTopMargin;
+    self.tag = kSGSearchOverlayTag;
+
+    bar.hidden = YES;
+    bar.alpha = 0.0;
+
+    [view addSubview:self];
+    [view bringSubviewToFront:self];
+
+    if (bar.text.length)
+        self.textField.text = bar.text;
+
+    [self setNeedsLayout];
+    [self layoutIfNeeded];
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self.textField becomeFirstResponder];
+        [self updatePositionForKeyboard];
+    });
+}
+
+- (void)updatePositionForKeyboard {
+    UIView *view = self.hostView;
+    if (!view) return;
+
+    CGRect keyboardScreen = CGRectZero;
+    for (UIWindow *window in UIApplication.sharedApplication.windows) {
+        if (window.isKeyWindow) {
+            // The current keyboard frame is obtained from the window's
+            // safe-area-adjusted layout by the notification handler.
+            (void)window;
+        }
+    }
+
+    // Default position: immediately above the bottom safe-area.
+    CGFloat bottom = view.safeAreaInsets.bottom;
+    CGFloat y = CGRectGetHeight(view.bounds) - bottom - CGRectGetHeight(self.bounds) - 10.0;
+
+    self.frame = CGRectMake(4.0, y,
+                            MIN(700.0, CGRectGetWidth(view.bounds) - 8.0),
+                            44.0);
+    [self setNeedsLayout];
+}
+
+- (void)sgKeyboardFrameChanged:(NSNotification *)note {
+    UIView *view = self.hostView;
+    if (!view) return;
+
+    NSDictionary *info = note.userInfo;
+    NSValue *value = info[UIKeyboardFrameEndUserInfoKey];
+    if (!value) return;
+
+    CGRect keyboardScreen = value.CGRectValue;
+    UIWindow *window = view.window;
+    if (!window) return;
+
+    CGRect keyboardInView = [view convertRect:keyboardScreen fromView:window.screen];
+    CGFloat keyboardTop = CGRectGetMinY(keyboardInView);
+    CGFloat h = CGRectGetHeight(self.bounds);
+
+    CGFloat y = keyboardTop - h - 10.0;
+    if (CGRectGetHeight(keyboardInView) <= 1.0) {
+        y = CGRectGetHeight(view.bounds) - view.safeAreaInsets.bottom - h - 10.0;
+    }
+
+    [UIView animateWithDuration:0.22
+                     animations:^{
+        self.frame = CGRectMake(12.0,
+                                 y,
+                                 MIN(520.0, CGRectGetWidth(view.bounds) - 24.0),
+                                 h);
+        [self setNeedsLayout];
+    }];
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (void)textChanged:(UITextField *)sender {
+    UISearchBar *bar = self.nativeSearchBar;
+    if (!bar) return;
+
+    bar.text = sender.text ?: @"";
+
+    id<UISearchBarDelegate> delegate = bar.delegate;
+    if ([delegate respondsToSelector:@selector(searchBar:textDidChange:)]) {
+        [delegate searchBar:bar textDidChange:bar.text];
+    }
+}
+
+- (BOOL)textFieldShouldReturn:(UITextField *)textField {
+    [textField resignFirstResponder];
+    return YES;
+}
+
+- (void)closePressed:(id)sender {
+    [self.textField resignFirstResponder];
+
+    UISearchBar *bar = self.nativeSearchBar;
+    if (bar) {
+        bar.hidden = NO;
+        bar.alpha = 1.0;
+        bar.text = @"";
+        [bar resignFirstResponder];
+    }
+
+    [self removeFromSuperview];
+}
+
+- (void)removeOverlay {
+    [self.textField resignFirstResponder];
+
+    if (self.nativeSearchBar) {
+        self.nativeSearchBar.hidden = NO;
+        self.nativeSearchBar.alpha = 1.0;
+    }
+
+    [self removeFromSuperview];
+}
+
+@end
 
 @interface SGSearchButton : UIControl
 @property(nonatomic, strong) SGLiveGlassView *glassView;
@@ -484,7 +733,7 @@ static NSString *SGEffectiveFilterType(UIView *view) {
     buttonBlur.layer.cornerRadius = 22.0;
     buttonBlur.layer.cornerCurve = kCACornerCurveContinuous;
     buttonBlur.clipsToBounds = YES;
-    buttonBlur.alpha = 0.72;
+    buttonBlur.alpha = 0.22;
 
     [self addSubview:buttonBlur];
 
@@ -498,8 +747,7 @@ static NSString *SGEffectiveFilterType(UIView *view) {
      */
     self.glassView.userInteractionEnabled = NO;
     self.glassView.cornerRadius = 22.0;
-    /* Stronger optical sampling for the whole pill. */
-    SGSetValue(self.glassView.layer, @1.08, @"zoom");
+    SGSetValue(self.glassView.layer, @(kSGGlassZoom), @"zoom");
 
     [self addSubview:self.glassView];
 
@@ -667,6 +915,10 @@ static NSString *SGEffectiveFilterType(UIView *view) {
                 } else {
                     [bar becomeFirstResponder];
                 }
+
+                SGSearchOverlay *overlay =
+                    [[SGSearchOverlay alloc] initWithFrame:CGRectZero];
+                [overlay attachToView:root.view searchBar:bar];
                 return;
             }
 
@@ -687,6 +939,10 @@ static NSString *SGEffectiveFilterType(UIView *view) {
                 } else {
                     [searchBar becomeFirstResponder];
                 }
+
+                SGSearchOverlay *overlay =
+                    [[SGSearchOverlay alloc] initWithFrame:CGRectZero];
+                [overlay attachToView:root.view searchBar:searchBar];
                 return;
             }
 
@@ -718,6 +974,10 @@ static NSString *SGEffectiveFilterType(UIView *view) {
                         } else {
                             [windowBar becomeFirstResponder];
                         }
+
+                        SGSearchOverlay *overlay =
+                            [[SGSearchOverlay alloc] initWithFrame:CGRectZero];
+                        [overlay attachToView:root.view searchBar:windowBar];
                         return;
                     }
                 }
@@ -740,6 +1000,10 @@ static NSString *SGEffectiveFilterType(UIView *view) {
                     } else {
                         [retry becomeFirstResponder];
                     }
+
+                    SGSearchOverlay *overlay =
+                        [[SGSearchOverlay alloc] initWithFrame:CGRectZero];
+                    [overlay attachToView:root.view searchBar:retry];
                 });
         });
 }
