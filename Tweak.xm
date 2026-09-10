@@ -28,9 +28,9 @@
 #pragma mark - Liquid Glass constants
 
 static NSString * const kSGFilterType = @"dylv.liquidglass.searchpill";
-static const CGFloat kSGSearchRefractionScale = 3.40;
-static const CGFloat kSGSearchRefractiveIndex = 2.40;
-static const CGFloat kSGSearchDispersion = 3.50;
+static const CGFloat kSGSearchRefractionScale __attribute__((unused)) = 3.40;
+static const CGFloat kSGSearchRefractiveIndex __attribute__((unused)) = 2.40;
+static const CGFloat kSGSearchDispersion __attribute__((unused)) = 3.50;
 static NSString * const kSGGroupNamespace = @"dylv.liquidglass";
 static NSString * const kSGGroupName = @"SearchGlass";
 
@@ -1098,7 +1098,7 @@ static BOOL LGNeedsGaussianIdentityFallback(void) {
 static CFStringRef const kLGParametersReloadedNotification =
     CFSTR("dylv.liquidglass/ParametersReloaded");
 static NSHashTable<LGLiveBackdropView *> *sLGAllGlasses;
-static BOOL sLGFilterRefreshSetup;
+static BOOL sLGFilterRefreshSetup __attribute__((unused));
 static BOOL LGSpecularEnabledForFilterType(NSString *type) {
     const LGHostDefinition *host = LGHostDefinitionForFilterType(type.UTF8String);
     if (host == &kLGHostRegistry[LGHostIdentifierCoverSheet]) return NO;
