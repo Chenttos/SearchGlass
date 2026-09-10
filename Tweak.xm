@@ -1,3 +1,4 @@
+#include <atomic>
 /*
  * SearchGlass
  * Liquid Glass renderer adapted from the public Liquid (Gl)ass project:
@@ -1411,8 +1412,14 @@ static const CGFloat kLGGlassEdgeWidth = 1.0;
     _appliedSpecularOpacity = -1.0;
     _lgShapeRect = CGRectNull;
     _lgFilterType = [filterType copy];
-    static atomic_uint idCounter = 0;
-    _lgId = atomic_fetch_add(&idCounter, 1) + 1;
+    /*
+     * Tweak.xm is compiled as Objective-C++ (.xm).
+     * The C11 atomic_uint/atomic_fetch_add API from <stdatomic.h>
+     * is not exposed correctly by some Theos/Clang C++ configurations.
+     * Use the C++ atomic implementation instead.
+     */
+    static std::atomic_uint idCounter{0};
+    _lgId = idCounter.fetch_add(1, std::memory_order_relaxed) + 1;
     if (groupName.length) {
         _lgGroupName = [groupName copy];
     } else {
