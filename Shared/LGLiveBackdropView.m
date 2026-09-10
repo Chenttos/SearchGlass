@@ -449,7 +449,25 @@ static const CGFloat kLGGlassEdgeWidth = 1.0;
 
 - (void)layoutSubviews  { [super layoutSubviews];  [self applyFilters]; [self updateSpecular]; }
 
+static BOOL LGIsSearchPillFilterType(NSString *filterType) {
+    return [filterType hasPrefix:@"dylv.liquidglass.searchpill"];
+}
+
+static CGFloat LGSearchPillFallbackBlurRadius(void) {
+    // SearchGlass must not use LGSettingsLowBlurView: on iOS 16 it can
+    // produce a partial-width backdrop band. Use CABackdropLayer's own
+    // gaussianBlur filter instead, which covers the complete pill bounds.
+    return 13.0;
+}
+
 - (void)updateNativeBlurOverlayWithRadius:(CGFloat)radius {
+    if (LGIsSearchPillFilterType(_lgFilterType)) {
+        [_nativeBlurView removeFromSuperview];
+        _nativeBlurView = nil;
+        _nativeBlurRadius = 0.0;
+        return;
+    }
+
     if (radius <= 0.0) {
         [_nativeBlurView removeFromSuperview];
         _nativeBlurView = nil;
@@ -653,6 +671,23 @@ static const CGFloat kLGGlassEdgeWidth = 1.0;
 
         id glassFilter = ((id (*)(Class, SEL, NSString *))objc_msgSend)(
             filterCls, NSSelectorFromString(@"filterWithType:"), wantType);
+
+        if (!glassFilter && LGIsSearchPillFilterType(_lgFilterType)) {
+            // The full Liquid (Gl)ass refraction filter is registered by the
+            // upstream backboardd component. SearchGlass can also run by
+            // itself, so provide a clean full-surface fallback instead of
+            // falling back to LGSettingsLowBlurView.
+            glassFilter = ((id (*)(Class, SEL, NSString *))objc_msgSend)(
+                filterCls, NSSelectorFromString(@"filterWithType:"), @"gaussianBlur");
+
+            if (glassFilter) {
+                @try {
+                    [glassFilter setValue:@(LGSearchPillFallbackBlurRadius())
+                                    forKey:@"inputRadius"];
+                } @catch (...) {}
+                LGLog(@"glass#%u using full-pill gaussian fallback", _lgId);
+            }
+        }
 
         if (!glassFilter) {
             LGLog(@"glass#%u filterWithType nil (not registered yet?)", _lgId);
