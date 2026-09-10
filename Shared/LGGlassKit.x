@@ -320,21 +320,21 @@ static void lgGlassInitEnableObserver(void) {
         hidden = YES;
     }
 
-    %orig(hidden);
+    %orig;
 }
 
 - (void)setFrame:(CGRect)frame {
-    %orig(frame);
+    %orig;
     LGResyncGlassGeometry((UIView *)self, kGlassKey);
 }
 
 - (void)setBounds:(CGRect)bounds {
-    %orig(bounds);
+    %orig;
     LGResyncGlassGeometry((UIView *)self, kGlassKey);
 }
 
 - (void)setCenter:(CGPoint)center {
-    %orig(center);
+    %orig;
     LGResyncGlassGeometry((UIView *)self, kGlassKey);
 }
 
